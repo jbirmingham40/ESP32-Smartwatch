@@ -2,6 +2,7 @@
 #include <serializable_config.h>
 #include <ArduinoJson.h>
 #include "SD_Card.h"
+#include "psram_alloc.h"
 
 void SerializableConfigs::add(SerializableConfig &config) {
 	serializableConfigs.push_back(&config);
@@ -9,7 +10,7 @@ void SerializableConfigs::add(SerializableConfig &config) {
 
 void SerializableConfigs::write() {
 	// create the JsonDocument
-	JsonDocument doc;
+	JsonDocument doc(SpiRamAllocator::instance());
 
 	for(int i=0; i<serializableConfigs.size(); i++) {
 		serializableConfigs[i]->serializeConfig(doc);
@@ -26,7 +27,7 @@ void SerializableConfigs::write() {
 }
 
 void SerializableConfigs::read() {
-	JsonDocument doc;
+	JsonDocument doc(SpiRamAllocator::instance());
 
   File file = SD_MMC.open(filename);
   if (!file) {

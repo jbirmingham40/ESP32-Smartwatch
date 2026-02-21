@@ -10,9 +10,9 @@
 #include <serializable_config.h>
 
 struct CalendarEvent {
-  String title;
-  String startTime;
-  String endTime;
+  char title[128];
+  char startTime[32];
+  char endTime[32];
   time_t startTimestamp;
   time_t endTimestamp;
 };

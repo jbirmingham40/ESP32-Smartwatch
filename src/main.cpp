@@ -321,13 +321,13 @@ void setup() {
   xTaskCreatePinnedToCoreWithCaps(
     BLE_Task,
     "BLE Task",
-    20480,
+    16384,
     NULL,
     4,                // Higher priority than Background_Tasks (3)
     &bleTaskHandle,
     0,                // Core 0 — same as NimBLE host task
     MALLOC_CAP_SPIRAM);
-  Serial.println(">> BLE task created (Core 0, priority 4, 20KB PSRAM stack)");
+  Serial.println(">> BLE task created (Core 0, priority 4, 16KB PSRAM stack)");
 
   // Background_Tasks now also runs calendar fetch directly (no CalFetch one-shot task).
   // 32KB stack gives plenty of room for TLS handshake call frames for both weather
@@ -335,12 +335,13 @@ void setup() {
   xTaskCreatePinnedToCoreWithCaps(
     Background_Tasks,
     "Background Tasks",
-    32768,
+    20480,
     NULL,
     3,
     &periodTasksHandle,
     0,
     MALLOC_CAP_SPIRAM);
+  Serial.println(">> Background Tasks created (Core 0, priority 3, 20KB PSRAM stack)");    
 
   xTaskCreatePinnedToCoreWithCaps(
     Driver_Loop,

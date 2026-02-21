@@ -10,8 +10,8 @@
 static lv_disp_draw_buf_t draw_buf;
 // static lv_color_t buf1[ LVGL_BUF_LEN ];
 // static lv_color_t buf2[ LVGL_BUF_LEN ];
-static lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(412 * 412, MALLOC_CAP_SPIRAM);
-static lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(412 * 412, MALLOC_CAP_SPIRAM);
+static lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(412 * 412 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+static lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(412 * 412 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
 
 
 

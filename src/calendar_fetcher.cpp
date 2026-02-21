@@ -136,7 +136,7 @@ void CalendarFetcher::updateCalendarDisplay() {
   // it while we're iterating below (the LVGL calls that follow can be slow).
   std::vector<CalendarEvent> snapshot;
   xSemaphoreTake(eventsMutex, portMAX_DELAY);
-  snapshot = events;  // deep copy — Strings are fully copied
+  snapshot = events;  // struct copy — char arrays copied by value
   xSemaphoreGive(eventsMutex);
 
   int eventCount = snapshot.size();
@@ -169,9 +169,12 @@ void CalendarFetcher::updateCalendarDisplay() {
       CalendarEvent event = snapshot[i];
 
       // Show time range if end time exists
-      String timeDisplay = event.startTime;
-      if (event.endTime.length() > 0 && event.endTime != event.startTime) {
-        timeDisplay += " - " + event.endTime;
+      char timeDisplay[80];
+      strncpy(timeDisplay, event.startTime, sizeof(timeDisplay) - 1);
+      timeDisplay[sizeof(timeDisplay) - 1] = '\0';
+      if (event.endTime[0] != '\0' && strcmp(event.endTime, event.startTime) != 0) {
+        strncat(timeDisplay, " - ", sizeof(timeDisplay) - strlen(timeDisplay) - 1);
+        strncat(timeDisplay, event.endTime, sizeof(timeDisplay) - strlen(timeDisplay) - 1);
       }
 
       // Debug: Show timestamp for sorting verification
@@ -267,7 +270,7 @@ void CalendarFetcher::updateCalendarDisplay() {
       lv_obj_set_style_text_font(event_name_label, &lv_font_montserrat_18, LV_PART_MAIN);
       lv_obj_set_style_pad_top(event_name_label, 4, LV_PART_MAIN);
       lv_obj_set_style_text_color(event_name_label, lv_color_hex(0xffffffff), LV_PART_MAIN);
-      lv_label_set_text_fmt(event_name_label, "%s", event.title.c_str());
+      lv_label_set_text_fmt(event_name_label, "%s", event.title);
 
       // Label: event time
       lv_obj_t* event_time_label = lv_label_create(event_name_time_container);
@@ -277,7 +280,7 @@ void CalendarFetcher::updateCalendarDisplay() {
       lv_obj_set_style_pad_bottom(event_time_label, 4, LV_PART_MAIN);
       lv_obj_set_style_text_opa(event_time_label, 215, LV_PART_MAIN);
       lv_obj_set_style_text_font(event_time_label, &lv_font_montserrat_16, LV_PART_MAIN);
-      lv_label_set_text_fmt(event_time_label, "%s", timeDisplay.c_str());
+      lv_label_set_text_fmt(event_time_label, "%s", timeDisplay);
     }
 
     // Auto-scroll to the first in-progress or upcoming event
@@ -538,7 +541,7 @@ bool CalendarFetcher::eventOccursOnDate(time_t eventStart, String rrule, time_t 
 }
 
 void CalendarFetcher::parseVEvent(String eventData) {
-  CalendarEvent event;
+  CalendarEvent event = {};
   bool allDay = false;
   String rrule = "";
 
@@ -547,8 +550,10 @@ void CalendarFetcher::parseVEvent(String eventData) {
   if (summaryStart != -1) {
     summaryStart += 8;
     int summaryEnd = eventData.indexOf("\n", summaryStart);
-    event.title = eventData.substring(summaryStart, summaryEnd);
-    event.title = decodeICalString(event.title);
+    String titleStr = eventData.substring(summaryStart, summaryEnd);
+    titleStr = decodeICalString(titleStr);
+    strncpy(event.title, titleStr.c_str(), sizeof(event.title) - 1);
+    event.title[sizeof(event.title) - 1] = '\0';
   }
 
   // Find DTSTART (start time)
@@ -565,7 +570,14 @@ void CalendarFetcher::parseVEvent(String eventData) {
     }
 
     event.startTimestamp = parseICalDateTime(dtStart);
-    event.startTime = allDay ? "All Day" : formatTime(event.startTimestamp);
+    if (allDay) {
+      strncpy(event.startTime, "All Day", sizeof(event.startTime) - 1);
+      event.startTime[sizeof(event.startTime) - 1] = '\0';
+    } else {
+      String t = formatTime(event.startTimestamp);
+      strncpy(event.startTime, t.c_str(), sizeof(event.startTime) - 1);
+      event.startTime[sizeof(event.startTime) - 1] = '\0';
+    }
   }
 
   // Find DTEND (end time)
@@ -577,7 +589,13 @@ void CalendarFetcher::parseVEvent(String eventData) {
     dtEnd.trim();
 
     event.endTimestamp = parseICalDateTime(dtEnd);
-    event.endTime = allDay ? "" : formatTime(event.endTimestamp);
+    if (allDay) {
+      event.endTime[0] = '\0';
+    } else {
+      String t = formatTime(event.endTimestamp);
+      strncpy(event.endTime, t.c_str(), sizeof(event.endTime) - 1);
+      event.endTime[sizeof(event.endTime) - 1] = '\0';
+    }
   }
 
   // Find RRULE (recurrence rule)
@@ -590,7 +608,7 @@ void CalendarFetcher::parseVEvent(String eventData) {
   }
 
   // Only add if we have a title AND the event occurs on the current viewing date
-  if (event.title.length() > 0 && eventOccursOnDate(event.startTimestamp, rrule, currentDate)) {
+  if (event.title[0] != '\0' && eventOccursOnDate(event.startTimestamp, rrule, currentDate)) {
     // Adjust timestamps to current viewing date (preserving time-of-day) for proper sorting and color logic
     // We must rebase BOTH start and end, otherwise endTimestamp stays on the original occurrence date
     // and the color comparison (endTimestamp <= now) incorrectly marks future recurring events as past.
@@ -611,7 +629,7 @@ void CalendarFetcher::parseVEvent(String eventData) {
     // Check for duplicates (same title and overlapping time)
     bool isDuplicate = false;
     for (int i = 0; i < events.size(); i++) {
-      if (events[i].title == event.title) {
+      if (strcmp(events[i].title, event.title) == 0) {
         // Check if times overlap or are very close (within same hour)
         struct tm existingTmBuf, newTmBuf;
         localtime_r(&events[i].startTimestamp, &existingTmBuf);
@@ -853,14 +871,15 @@ void CalendarFetcher::requestFetch() {
   // FIX: 16KB was insufficient for mbedTLS handshake over HTTPS (Google Calendar
   // uses TLS). Stack overflow corrupted adjacent memory → LoadProhibited crash
   // with EXCVADDR 0x00000043 and CORRUPTED backtrace. 32KB matches artwork task.
-  xTaskCreatePinnedToCore(
+  xTaskCreatePinnedToCoreWithCaps(
     fetchTask,
     "CalFetch",
     32768,  // 32KB — mbedTLS TLS handshake needs ~20-24KB stack
     this,   // Pass 'this' so the static function can access the instance
     2,      // Priority below Periodic_Tasks (3) so BLE/time aren't starved
     &fetchTaskHandle,
-    0      // Core 0
+    0,      // Core 0
+    MALLOC_CAP_SPIRAM  // Allocate task control block in PSRAM to save internal heap
   );
 }
 
@@ -952,7 +971,7 @@ CalendarEvent CalendarFetcher::getEvent(int index) {
   if (index >= 0 && index < events.size()) {
     return events[index];
   }
-  return CalendarEvent();
+  return CalendarEvent{};
 }
 
 void CalendarFetcher::clearEvents() {
