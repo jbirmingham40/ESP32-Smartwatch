@@ -1,0 +1,51 @@
+{
+  "name": "Waveshare ESP32-S3 Touch LCD 1.46",
+  "vendor": "Waveshare",
+  "url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.46B",
+  "frameworks": ["arduino", "espidf"],
+  "platform": "espressif32",
+
+  "build": {
+    "mcu": "esp32s3",
+    "f_cpu": "240000000L",
+    "variant": "esp32s3",
+    "core": "esp32",
+    "extra_flags": [
+      "-DBOARD_HAS_PSRAM",
+      "-DWAVESHARE_ESP32S3_TOUCH_LCD_146",
+
+      "-DLCD_TE=18",
+      "-DLCD_CS=21",
+      "-DLCD_SCK=40",
+      "-DLCD_SDA0=46",
+      "-DLCD_SDA1=45",
+      "-DLCD_SDA2=42",
+      "-DLCD_SDA3=41",
+
+      "-DTP_INT=4",
+      "-DI2C_SCL=10",
+      "-DI2C_SDA=11",
+
+      "-DSD_SCLK=14",
+      "-DSD_MISO=16",
+      "-DSD_MOSI=17"
+    ]
+  },
+
+  "upload": {
+    "flash_size": "16MB",
+    "maximum_size": 16777216,
+    "maximum_ram_size": 524288,
+    "speed": 921600,
+    "protocol": "esptool"
+  },
+
+  "monitor": {
+    "speed": 115200
+  },
+
+  "connectivity": ["wifi", "bluetooth"],
+  "debug": {
+    "openocd_target": "esp32s3.cfg"
+  }
+}
