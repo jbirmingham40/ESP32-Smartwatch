@@ -5,16 +5,7 @@
 
 extern "C" {
 #include "esp_heap_caps.h"
-// FIX: Required for ble_gap_conn_find() — the authoritative check for whether
-// the NimBLE host-layer connection descriptor (struct ble_hs_conn) is still valid.
-// NimBLEClient::isConnected() caches a flag and can return true even after the
-// hardware-level descriptor has been freed (phone asleep / link gone stale).
-// Any subsequent BLE I/O (writeValue / readValue) that dereferences that freed
-// descriptor crashes with LoadProhibited at EXCVADDR 0x00000043.
-// ble_gap_conn_find() queries the live host connection table and returns
-// BLE_HS_ENOTCONN when the descriptor is gone, safely catching this window
-// before any I/O attempt.
-#include "host/ble_gap.h"
+#include "sdkconfig.h"
 }
 
 #define nimble_malloc(size) heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
