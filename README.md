@@ -22,6 +22,18 @@ Board references:
 - Product: https://www.waveshare.com/esp32-s3-touch-lcd-1.46b.htm
 - Wiki: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.46B#Resources
 
+## Screenshots
+
+### Main Screen
+
+![Main screen](screenshots/01-main.jpeg)
+
+### Media Screen
+
+![Media screen](screenshots/media.jpeg)
+
+More screenshots: [screenshots/](screenshots/)
+
 ## Current Features
 
 - Timer
