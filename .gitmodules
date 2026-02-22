@@ -1,0 +1,3 @@
+[submodule "eez-studio"]
+	path = eez-studio
+	url = git@github.com:jbirmingham40/ESP32-Smartwatch-EEZ.git
