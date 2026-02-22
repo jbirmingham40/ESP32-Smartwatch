@@ -1,27 +1,49 @@
 #include "Touch_SPD2010.h"
 
 struct SPD2010_Touch touch_data = {0};
-uint8_t Touch_interrupts=0;
+volatile bool Touch_interrupts = false;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool I2C_Read_Touch(uint8_t Driver_addr, uint16_t Reg_addr, uint8_t *Reg_data, uint32_t Length)
 {
+  if (!Reg_data || Length == 0) {
+    return false;
+  }
+  if (!I2C_Lock()) {
+    printf("I2C lock timeout - I2C Read Touch\r\n");
+    return false;
+  }
+
   Wire.beginTransmission(Driver_addr);
   Wire.write((uint8_t)(Reg_addr >> 8)); 
   Wire.write((uint8_t)Reg_addr);        
   if (Wire.endTransmission(true)){
     printf("The I2C transmission fails. - I2C Read Touch\r\n");
+    I2C_Unlock();
     return false;
   }
-  Wire.requestFrom(Driver_addr, Length);
-  while (Wire.available()) {
-    *Reg_data++ =Wire.read();
+  int received = Wire.requestFrom(Driver_addr, Length);
+  if (received != (int)Length) {
+    printf("The I2C read length is invalid. - I2C Read Touch exp=%u got=%d\r\n", (unsigned)Length, received);
+    I2C_Unlock();
+    return false;
   }
+  for (uint32_t i = 0; i < Length && Wire.available(); i++) {
+    *Reg_data++ = Wire.read();
+  }
+  I2C_Unlock();
   return true;
 }
 bool I2C_Write_Touch(uint8_t Driver_addr, uint16_t Reg_addr, const uint8_t *Reg_data, uint32_t Length)
 {
+ if ((Length > 0 && !Reg_data) || !I2C_Lock()) {
+  if (Length > 0 && !Reg_data) {
+    return false;
+  }
+  printf("I2C lock timeout - I2C Write Touch\r\n");
+  return false;
+ }
  Wire.beginTransmission(Driver_addr);
  Wire.write((uint8_t)(Reg_addr >> 8)); 
  Wire.write((uint8_t)Reg_addr);         
@@ -31,8 +53,10 @@ bool I2C_Write_Touch(uint8_t Driver_addr, uint16_t Reg_addr, const uint8_t *Reg_
   if (Wire.endTransmission(true))
   {
     printf("The I2C transmission fails. - I2C Write Touch\r\n");
+    I2C_Unlock();
     return false;
   }
+  I2C_Unlock();
   return true;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -69,7 +93,21 @@ uint16_t SPD2010_Read_cfg(void) {
 void Touch_Read_Data(void) {
   uint8_t touch_cnt = 0;
   struct SPD2010_Touch touch = {0};
-  tp_read_data(&touch);
+
+  // Only read the touch controller when it signaled data ready.
+  noInterrupts();
+  bool shouldRead = Touch_interrupts;
+  Touch_interrupts = false;
+  interrupts();
+  if (!shouldRead) {
+    touch_data.touch_num = 0;
+    return;
+  }
+
+  if (tp_read_data(&touch) != ESP_OK) {
+    touch_data.touch_num = 0;
+    return;
+  }
   
   noInterrupts(); 
   /* Expect Number of touched points */
@@ -173,7 +211,18 @@ esp_err_t read_tp_status_length(tp_status_t *tp_status)
   uint8_t sample_data[4];
   sample_data[0] = 0x20;
   sample_data[1] = 0x00;
-  I2C_Read_Touch(SPD2010_ADDR, (((uint16_t)sample_data[0] << 8) | (sample_data[1])),sample_data, 4);
+  if (!I2C_Read_Touch(SPD2010_ADDR, (((uint16_t)sample_data[0] << 8) | (sample_data[1])), sample_data, 4)) {
+    tp_status->status_low.pt_exist = 0;
+    tp_status->status_low.gesture = 0;
+    tp_status->status_low.aux = 0;
+    tp_status->status_high.tic_busy = 0;
+    tp_status->status_high.tic_in_bios = 0;
+    tp_status->status_high.tic_in_cpu = 0;
+    tp_status->status_high.tint_low = 0;
+    tp_status->status_high.cpu_run = 0;
+    tp_status->read_len = 0;
+    return ESP_FAIL;
+  }
   esp_rom_delay_us(200);
   tp_status->status_low.pt_exist = (sample_data[0] & 0x01);
   tp_status->status_low.gesture = (sample_data[0] & 0x02);
@@ -192,14 +241,35 @@ esp_err_t read_tp_hdp(tp_status_t *tp_status, SPD2010_Touch *touch)
   uint8_t sample_data[4+(10*6)]; // 4 Bytes Header + 10 Finger * 6 Bytes
   uint8_t i, offset;
   uint8_t check_id;
+  if (!tp_status || !touch) {
+    return ESP_ERR_INVALID_ARG;
+  }
+
   sample_data[0] = 0x00;
   sample_data[1] = 0x03;
-  I2C_Read_Touch(SPD2010_ADDR, (((uint16_t)sample_data[0] << 8) | (sample_data[1])),sample_data, tp_status->read_len);
+  uint16_t readLen = tp_status->read_len;
+  if (readLen < 4) {
+    touch->touch_num = 0;
+    touch->gesture = 0;
+    return ESP_OK;
+  }
+  if (readLen > sizeof(sample_data)) {
+    printf("Touch packet too large (%u), truncating to %u\r\n", readLen, (unsigned)sizeof(sample_data));
+    readLen = sizeof(sample_data);
+  }
+  if (!I2C_Read_Touch(SPD2010_ADDR, (((uint16_t)sample_data[0] << 8) | (sample_data[1])), sample_data, readLen)) {
+    touch->touch_num = 0;
+    touch->gesture = 0;
+    return ESP_FAIL;
+  }
 
 
   check_id = sample_data[4];
   if ((check_id <= 0x0A) && tp_status->status_low.pt_exist) {
-    touch->touch_num = ((tp_status->read_len - 4)/6);
+    touch->touch_num = ((readLen - 4) / 6);
+    if (touch->touch_num > 10) {
+      touch->touch_num = 10;
+    }
     touch->gesture = 0x00;
     for (i = 0; i < touch->touch_num; i++) {
       offset = i*6;
@@ -246,7 +316,11 @@ esp_err_t read_tp_hdp_status(tp_hdp_status_t *tp_hdp_status)
   uint8_t sample_data[8];
   sample_data[0] = 0xFC;
   sample_data[1] = 0x02;
-  I2C_Read_Touch(SPD2010_ADDR, (((uint16_t)sample_data[0] << 8) | (sample_data[1])),sample_data, 8);
+  if (!I2C_Read_Touch(SPD2010_ADDR, (((uint16_t)sample_data[0] << 8) | (sample_data[1])), sample_data, 8)) {
+    tp_hdp_status->status = 0x82;  // treat as done/error path
+    tp_hdp_status->next_packet_len = 0;
+    return ESP_FAIL;
+  }
   tp_hdp_status->status = sample_data[5];
   tp_hdp_status->next_packet_len = (sample_data[2] | sample_data[3] << 8);
   return ESP_OK;
@@ -257,7 +331,14 @@ esp_err_t Read_HDP_REMAIN_DATA(tp_hdp_status_t *tp_hdp_status)
   uint8_t sample_data[32];
   sample_data[0] = 0x00;
   sample_data[1] = 0x03;
-  I2C_Read_Touch(SPD2010_ADDR,  (((uint16_t)sample_data[0] << 8) | (sample_data[1])),sample_data, tp_hdp_status->next_packet_len);
+  uint16_t remainLen = tp_hdp_status->next_packet_len;
+  if (remainLen > sizeof(sample_data)) {
+    printf("Touch remain packet too large (%u), truncating to %u\r\n", remainLen, (unsigned)sizeof(sample_data));
+    remainLen = sizeof(sample_data);
+  }
+  if (!I2C_Read_Touch(SPD2010_ADDR,  (((uint16_t)sample_data[0] << 8) | (sample_data[1])), sample_data, remainLen)) {
+    return ESP_FAIL;
+  }
   return ESP_OK;
 }
 

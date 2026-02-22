@@ -457,10 +457,27 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
   client->setInsecure();  // skip cert verification – saves a few more KB
   client->setTimeout(15);
 
+  // Placement-new object cleanup helper. We intentionally destroy the object
+  // only when TLS was established, mirroring prior safety behavior.
+  auto cleanupClient = [&](bool destroyClient) {
+    if (client && destroyClient) {
+      // Ensure socket state is closed before teardown.
+      client->stop();
+      vTaskDelay(pdMS_TO_TICKS(10));
+      client->~NetworkClientSecure();
+      client = nullptr;
+    }
+    if (clientBuf) {
+      heap_caps_free(clientBuf);
+      clientBuf = nullptr;
+    }
+  };
+
   char *url = (char *)heap_caps_malloc(512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!url) {
     Serial.println(F("[iTunes] Failed to allocate URL buffer"));
-    delete client;
+    // No network activity occurred yet; explicit teardown is safe here.
+    cleanupClient(true);
     return false;
   }
 
@@ -554,12 +571,10 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
     // corrupt PSRAM data, not DRAM interrupt-handler descriptors, so this is
     // safe either way - but skipping it on failure avoids the noisy stack trace.
     if (tlsEstablished) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-      client->~NetworkClientSecure();
+      cleanupClient(true);
+    } else {
+      cleanupClient(false);
     }
-    heap_caps_free(clientBuf);
-    client = nullptr;
-    clientBuf = nullptr;
   }
 
   heap_caps_free(url);

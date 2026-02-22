@@ -33,7 +33,6 @@ uint8_t i2sBuffer[2048] __attribute__((section(".extram.bss")));
 
 extern void monitor_heap();
 extern void onWifiConnected();
-extern void artwork_init_psram_tls();
 
 Settings settings;
 NotificationStore notificationStore;
@@ -256,7 +255,6 @@ void setup() {
   Serial.setTxBufferSize(2048);
   delay(200);
   while (!Serial) { delay(10); }   // key for native USB CDC
-  Serial.println("Tick");
 
   int ret = mbedtls_platform_set_calloc_free(psram_calloc, psram_free);
   Serial.printf(">> mbedTLS → PSRAM: %s\n", ret == 0 ? "OK" : "FAILED");
