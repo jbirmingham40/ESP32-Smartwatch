@@ -73,4 +73,7 @@ void Settings::deserializeConfig(JsonDocument &doc) {
   brightness = doc["settings"]["brightness"];
   volume = doc["settings"]["volume"];
   dailyStepsGoal = doc["settings"]["daily_steps_goal"];
+
+  Set_Backlight(brightness);
+  Volume_adjustment(volume);
 }
