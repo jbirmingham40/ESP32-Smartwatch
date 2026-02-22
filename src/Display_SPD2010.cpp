@@ -65,7 +65,7 @@ bool QSPI_Init(void){
 esp_lcd_panel_handle_t panel_handle = NULL;
 bool SPD2010_Init() {
   SPD2010_Reset();
-  pinMode(ESP_PANEL_LCD_SPI_IO_TE, OUTPUT);
+  pinMode(ESP_PANEL_LCD_SPI_IO_TE, INPUT_PULLDOWN);
   if(!QSPI_Init()){
     printf("SPD2010 Failed to be initialized\r\n");
   }

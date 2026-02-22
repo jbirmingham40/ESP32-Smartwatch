@@ -269,7 +269,7 @@ void CalendarFetcher::updateCalendarDisplay() {
       lv_label_set_long_mode(event_name_label, LV_LABEL_LONG_DOT);
       lv_obj_set_style_text_font(event_name_label, &lv_font_montserrat_18, LV_PART_MAIN);
       lv_obj_set_style_pad_top(event_name_label, 4, LV_PART_MAIN);
-      lv_obj_set_style_text_color(event_name_label, lv_color_hex(0xffffffff), LV_PART_MAIN);
+      lv_obj_set_style_text_color(event_name_label, lv_color_hex(0xffe0e0e0), LV_PART_MAIN);
       lv_label_set_text_fmt(event_name_label, "%s", event.title);
 
       // Label: event time
