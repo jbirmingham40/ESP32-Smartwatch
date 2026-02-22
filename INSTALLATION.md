@@ -38,7 +38,18 @@ Settings are stored at:
 
 - `/System/config.json`
 
-## 4. Calendar Configuration (Optional)
+
+## 4. Configure API keys
+
+The watch uses three free services: 
+* https://ipgeolocation.io, 
+* https://zipcodestack.com, 
+* https://imezonedb.com.  
+
+You will have to register with each one and obtain an API key.  Then copy 
+'secrets.h.template' to 'secrets.h' and add your API keys.
+
+## 5. Calendar Configuration (Optional)
 
 If you want calendar events on the watch, manually add your iCal URLs to `/System/config.json`.
 There is currently no UI for this setup.
@@ -54,7 +65,18 @@ Example:
 }
 ```
 
-## 5. EEZ Studio Setup (Optional, for UI Editing)
+If you are using Google Calendar, the iCal URL can be found by following these steps:
+
+1. Go to https://calendar.google.com/
+2. Click the gear icon and then click Settings.
+3. In the left nav bar, look for the name of the calendar you want to setup.
+4. Click the calendar name, after it expands, click the Integrate calendar option.
+5. Look for the section title 'Secret address in iCal format' and click the copy button to the right.
+
+Refer to online help for other services.  Note this code relies on being able to filter on start-min and start-max for performance.  Google and others support this.  I have not tested services that do not. I expect my code will work either way but it couldlead to memory pressure and/or slowness due to having to download the entire calendar with every load.
+
+
+## 6. EEZ Studio Setup (Optional, for UI Editing)
 
 You only need EEZ Studio if you want to modify the UI.
 
