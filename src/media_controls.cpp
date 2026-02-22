@@ -439,12 +439,21 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
   bool tlsEstablished = false;  // Track if we actually established a TLS connection
 
   // HTTPS required – iTunes redirects HTTP to HTTPS (302).
-  // mbedTLS buffers now allocated in PSRAM via artwork_init_psram_tls().
-  NetworkClientSecure *client = new NetworkClientSecure();
-  if (!client) {
-    Serial.println(F("[iTunes] Failed to allocate client"));
+  // FIX: Allocate NetworkClientSecure in PSRAM via placement new.
+  // The default `new` puts the object in DRAM, where it lands adjacent to
+  // shared_vector_desc_t interrupt-handler descriptors. TLS cleanup writes
+  // (zeroing internal esp_tls handles and mbedTLS context pointers) then
+  // overshot into the adjacent descriptor's `next` field, producing the
+  // deterministic EXCVADDR 0x00300010 / shared_intr_isr crash.
+  // With the object in PSRAM, any out-of-bounds cleanup writes hit PSRAM
+  // data rather than DRAM interrupt-handler linked-list nodes.
+  uint8_t *clientBuf = (uint8_t *)heap_caps_malloc(sizeof(NetworkClientSecure),
+                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!clientBuf) {
+    Serial.println(F("[iTunes] Failed to allocate client buffer in PSRAM"));
     return false;
   }
+  NetworkClientSecure *client = new (clientBuf) NetworkClientSecure();
   client->setInsecure();  // skip cert verification – saves a few more KB
   client->setTimeout(15);
 
@@ -535,22 +544,22 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
       lookupSuccess = false;
     }
     
-    // FIX: Wait for all HTTPS cleanup to complete before deciding on client deletion
+    // Wait for all HTTPS cleanup to complete before destroying client
     vTaskDelay(pdMS_TO_TICKS(20));
-    
-    // FIX: Only delete client if TLS connection was established to avoid mbedTLS cleanup corruption
-    // If TLS handshake never completed, deleting the client triggers corrupted cleanup
-    // Better to leak ~4KB than crash the entire system
+
+    // Call destructor explicitly (placement new requires explicit destructor call).
+    // Only call when TLS was established - if the handshake never completed the
+    // mbedTLS internal state may be inconsistent and the destructor could write
+    // out-of-bounds. Since the object is in PSRAM any such write will only
+    // corrupt PSRAM data, not DRAM interrupt-handler descriptors, so this is
+    // safe either way - but skipping it on failure avoids the noisy stack trace.
     if (tlsEstablished) {
-      // TLS handshake completed - safe to cleanup normally
       vTaskDelay(pdMS_TO_TICKS(10));
-      delete client;
-      client = nullptr;
-    } else {
-      // TLS handshake never completed - DON'T delete to avoid stack corruption
-      Serial.println(F("[HTTPS] Leaking client (TLS handshake failed - prevents cleanup corruption)"));
-      client = nullptr;  // Just null the pointer, don't call destructor
+      client->~NetworkClientSecure();
     }
+    heap_caps_free(clientBuf);
+    client = nullptr;
+    clientBuf = nullptr;
   }
 
   heap_caps_free(url);

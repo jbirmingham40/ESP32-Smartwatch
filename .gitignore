@@ -17,3 +17,6 @@ Thumbs.db
 
 # Python cache
 __pycache__/
+
+# Secrets
+src/secrets.h
