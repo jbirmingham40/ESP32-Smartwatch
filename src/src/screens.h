@@ -272,10 +272,10 @@ typedef struct _objects_t {
     lv_obj_t *obj96;
     lv_obj_t *obj97;
     lv_obj_t *obj98;
-    lv_obj_t *media_prev_track_button;
     lv_obj_t *obj99;
-    lv_obj_t *media_next_track_button;
+    lv_obj_t *media_prev_track_button;
     lv_obj_t *obj100;
+    lv_obj_t *media_next_track_button;
     lv_obj_t *obj101;
     lv_obj_t *obj102;
     lv_obj_t *obj103;
@@ -540,15 +540,6 @@ void tick_user_widget_two_dots_bottom(void *flowState, int startWidgetIndex);
 
 void create_user_widget_two_dots_top(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex);
 void tick_user_widget_two_dots_top(void *flowState, int startWidgetIndex);
-
-void create_user_widget_three_dots_top(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex);
-void tick_user_widget_three_dots_top(void *flowState, int startWidgetIndex);
-
-void create_user_widget_three_dots_middle(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex);
-void tick_user_widget_three_dots_middle(void *flowState, int startWidgetIndex);
-
-void create_user_widget_three_dots_bottom(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex);
-void tick_user_widget_three_dots_bottom(void *flowState, int startWidgetIndex);
 
 void create_screen_by_id(enum ScreensEnum screenId);
 void delete_screen_by_id(enum ScreensEnum screenId);

@@ -6,6 +6,7 @@
 #include <NetworkClientSecure.h>
 #include <WiFiClient.h>
 #include <ArduinoJson.h>
+#include <new>
 #include "pngle.h"
 #include <lvgl.h>
 #include "src/images.h"
@@ -453,7 +454,7 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
     Serial.println(F("[iTunes] Failed to allocate client buffer in PSRAM"));
     return false;
   }
-  NetworkClientSecure *client = new (clientBuf) NetworkClientSecure();
+  NetworkClientSecure *client = new (static_cast<void *>(clientBuf)) NetworkClientSecure();
   client->setInsecure();  // skip cert verification – saves a few more KB
   client->setTimeout(15);
 

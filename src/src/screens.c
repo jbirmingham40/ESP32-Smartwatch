@@ -3405,7 +3405,6 @@ void create_screen_settings() {
                             objects.brightness_slider = obj;
                             lv_obj_set_pos(obj, 0, 0);
                             lv_obj_set_size(obj, 250, 20);
-                            lv_slider_set_range(obj, 0, 85);
                             lv_obj_add_event_cb(obj, event_handler_cb_settings_brightness_slider, LV_EVENT_ALL, flowState);
                             lv_obj_add_flag(obj, LV_OBJ_FLAG_EVENT_BUBBLE|LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_OVERFLOW_VISIBLE|LV_OBJ_FLAG_ADV_HITTEST);
                             lv_obj_clear_flag(obj, LV_OBJ_FLAG_GESTURE_BUBBLE);
@@ -3888,6 +3887,7 @@ void create_screen_media() {
                             lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
                             lv_obj_set_style_text_font(obj, &lv_font_montserrat_22, LV_PART_MAIN | LV_STATE_DEFAULT);
                             lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+                            lv_obj_set_style_text_color(obj, lv_color_hex(0xffe0e0e0), LV_PART_MAIN | LV_STATE_DEFAULT);
                             lv_label_set_text(obj, "");
                         }
                     }
@@ -3941,17 +3941,18 @@ void create_screen_media() {
                                 lv_obj_t *parent_obj = obj;
                                 {
                                     lv_obj_t *obj = lv_label_create(parent_obj);
-                                    objects.obj100 = obj;
+                                    objects.obj96 = obj;
                                     lv_obj_set_pos(obj, 145, 49);
                                     lv_obj_set_size(obj, 350, LV_SIZE_CONTENT);
                                     lv_label_set_long_mode(obj, LV_LABEL_LONG_SCROLL);
                                     lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
                                     lv_obj_set_style_text_font(obj, &lv_font_montserrat_28, LV_PART_MAIN | LV_STATE_DEFAULT);
+                                    lv_obj_set_style_text_color(obj, lv_color_hex(0xffe0e0e0), LV_PART_MAIN | LV_STATE_DEFAULT);
                                     lv_label_set_text(obj, "");
                                 }
                                 {
                                     lv_obj_t *obj = lv_label_create(parent_obj);
-                                    objects.obj96 = obj;
+                                    objects.obj97 = obj;
                                     lv_obj_set_pos(obj, 145, 162);
                                     lv_obj_set_size(obj, 350, LV_SIZE_CONTENT);
                                     lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
@@ -4013,7 +4014,7 @@ void create_screen_media() {
                                 }
                                 {
                                     lv_obj_t *obj = lv_bar_create(parent_obj);
-                                    objects.obj97 = obj;
+                                    objects.obj98 = obj;
                                     lv_obj_set_pos(obj, 103, 286);
                                     lv_obj_set_size(obj, LV_PCT(100), 8);
                                     lv_obj_set_style_bg_color(obj, lv_color_hex(0xff2d8cff), LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -4059,7 +4060,7 @@ void create_screen_media() {
                         }
                         {
                             lv_obj_t *obj = lv_obj_create(parent_obj);
-                            objects.obj98 = obj;
+                            objects.obj99 = obj;
                             lv_obj_set_pos(obj, 0, 0);
                             lv_obj_set_size(obj, LV_SIZE_CONTENT, 40);
                             lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -4114,7 +4115,7 @@ void create_screen_media() {
                                 }
                                 {
                                     lv_obj_t *obj = lv_obj_create(parent_obj);
-                                    objects.obj99 = obj;
+                                    objects.obj100 = obj;
                                     lv_obj_set_pos(obj, 0, 0);
                                     lv_obj_set_size(obj, 65, 40);
                                     lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -4229,16 +4230,16 @@ void delete_screen_media() {
     objects.media_app_image = 0;
     objects.media_app_name = 0;
     objects.media_image = 0;
-    objects.obj100 = 0;
     objects.obj96 = 0;
+    objects.obj97 = 0;
     objects.obj101 = 0;
     objects.obj102 = 0;
-    objects.obj97 = 0;
-    objects.media_volume_down_button = 0;
     objects.obj98 = 0;
+    objects.media_volume_down_button = 0;
+    objects.obj99 = 0;
     objects.obj34 = 0;
     objects.media_prev_track_button = 0;
-    objects.obj99 = 0;
+    objects.obj100 = 0;
     objects.media_pause_button = 0;
     objects.media_play_button = 0;
     objects.obj35 = 0;
@@ -4262,19 +4263,19 @@ void tick_screen_media() {
     }
     {
         const char *new_val = evalTextProperty(flowState, 9, 3, "Failed to evaluate Text in Label widget");
-        const char *cur_val = lv_label_get_text(objects.obj100);
+        const char *cur_val = lv_label_get_text(objects.obj96);
         if (strcmp(new_val, cur_val) != 0) {
-            tick_value_change_obj = objects.obj100;
-            lv_label_set_text(objects.obj100, new_val);
+            tick_value_change_obj = objects.obj96;
+            lv_label_set_text(objects.obj96, new_val);
             tick_value_change_obj = NULL;
         }
     }
     {
         const char *new_val = evalTextProperty(flowState, 10, 3, "Failed to evaluate Text in Label widget");
-        const char *cur_val = lv_label_get_text(objects.obj96);
+        const char *cur_val = lv_label_get_text(objects.obj97);
         if (strcmp(new_val, cur_val) != 0) {
-            tick_value_change_obj = objects.obj96;
-            lv_label_set_text(objects.obj96, new_val);
+            tick_value_change_obj = objects.obj97;
+            lv_label_set_text(objects.obj97, new_val);
             tick_value_change_obj = NULL;
         }
     }
@@ -4298,10 +4299,10 @@ void tick_screen_media() {
     }
     {
         int32_t new_val = evalIntegerProperty(flowState, 15, 3, "Failed to evaluate Value in Bar widget");
-        int32_t cur_val = lv_bar_get_value(objects.obj97);
+        int32_t cur_val = lv_bar_get_value(objects.obj98);
         if (new_val != cur_val) {
-            tick_value_change_obj = objects.obj97;
-            lv_bar_set_value(objects.obj97, new_val, LV_ANIM_OFF);
+            tick_value_change_obj = objects.obj98;
+            lv_bar_set_value(objects.obj98, new_val, LV_ANIM_OFF);
             tick_value_change_obj = NULL;
         }
     }
@@ -11065,7 +11066,7 @@ void create_user_widget_dock(lv_obj_t *parent_obj, void *flowState, int startWid
                             lv_obj_set_pos(obj, 14, 3);
                             lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
                             lv_obj_set_style_text_font(obj, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
-                            lv_obj_set_style_text_color(obj, lv_color_hex(0xfffffefe), LV_PART_MAIN | LV_STATE_DEFAULT);
+                            lv_obj_set_style_text_color(obj, lv_color_hex(0xffe0e0e0), LV_PART_MAIN | LV_STATE_DEFAULT);
                             lv_label_set_text(obj, "");
                         }
                     }
@@ -11273,237 +11274,9 @@ void tick_user_widget_two_dots_top(void *flowState, int startWidgetIndex) {
     (void)startWidgetIndex;
 }
 
-void create_user_widget_three_dots_top(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex) {
-    (void)flowState;
-    (void)startWidgetIndex;
-    lv_obj_t *obj = parent_obj;
-    {
-        lv_obj_t *parent_obj = obj;
-        {
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            lv_obj_set_pos(obj, 10, 188);
-            lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-            lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_bg_opa(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_radius(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_track_place(obj, LV_FLEX_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_cross_place(obj, LV_FLEX_ALIGN_START, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_main_place(obj, LV_FLEX_ALIGN_START, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_flow(obj, LV_FLEX_FLOW_COLUMN, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_layout(obj, LV_LAYOUT_FLEX, LV_PART_MAIN | LV_STATE_DEFAULT);
-            {
-                lv_obj_t *parent_obj = obj;
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 0] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffe0e0e0), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 1] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff676767), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 2] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff676767), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-            }
-        }
-    }
-}
-
-void tick_user_widget_three_dots_top(void *flowState, int startWidgetIndex) {
-    (void)flowState;
-    (void)startWidgetIndex;
-}
-
-void create_user_widget_three_dots_middle(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex) {
-    (void)flowState;
-    (void)startWidgetIndex;
-    lv_obj_t *obj = parent_obj;
-    {
-        lv_obj_t *parent_obj = obj;
-        {
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            lv_obj_set_pos(obj, 10, 188);
-            lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-            lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_bg_opa(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_radius(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_track_place(obj, LV_FLEX_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_cross_place(obj, LV_FLEX_ALIGN_START, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_main_place(obj, LV_FLEX_ALIGN_START, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_flow(obj, LV_FLEX_FLOW_COLUMN, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_layout(obj, LV_LAYOUT_FLEX, LV_PART_MAIN | LV_STATE_DEFAULT);
-            {
-                lv_obj_t *parent_obj = obj;
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 0] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff676767), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 1] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffe0e0e0), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 2] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff676767), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-            }
-        }
-    }
-}
-
-void tick_user_widget_three_dots_middle(void *flowState, int startWidgetIndex) {
-    (void)flowState;
-    (void)startWidgetIndex;
-}
-
-void create_user_widget_three_dots_bottom(lv_obj_t *parent_obj, void *flowState, int startWidgetIndex) {
-    (void)flowState;
-    (void)startWidgetIndex;
-    lv_obj_t *obj = parent_obj;
-    {
-        lv_obj_t *parent_obj = obj;
-        {
-            lv_obj_t *obj = lv_obj_create(parent_obj);
-            lv_obj_set_pos(obj, 10, 188);
-            lv_obj_set_size(obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-            lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_bg_opa(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_radius(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_track_place(obj, LV_FLEX_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_cross_place(obj, LV_FLEX_ALIGN_START, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_main_place(obj, LV_FLEX_ALIGN_START, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_flex_flow(obj, LV_FLEX_FLOW_COLUMN, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_layout(obj, LV_LAYOUT_FLEX, LV_PART_MAIN | LV_STATE_DEFAULT);
-            {
-                lv_obj_t *parent_obj = obj;
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 0] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff676767), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 1] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xff676767), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-                {
-                    lv_obj_t *obj = lv_obj_create(parent_obj);
-                    ((lv_obj_t **)&objects)[startWidgetIndex + 2] = obj;
-                    lv_obj_set_pos(obj, 0, 0);
-                    lv_obj_set_size(obj, 10, 10);
-                    lv_obj_set_style_pad_left(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_top(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_right(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_pad_bottom(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_radius(obj, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xffe0e0e0), LV_PART_MAIN | LV_STATE_DEFAULT);
-                    lv_obj_set_style_bg_opa(obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-                }
-            }
-        }
-    }
-}
-
-void tick_user_widget_three_dots_bottom(void *flowState, int startWidgetIndex) {
-    (void)flowState;
-    (void)startWidgetIndex;
-}
-
 
 static const char *screen_names[] = { "Main", "IncomingCall", "Applications", "AlarmTriggered", "Settings", "Media", "WifiSettings", "WifiCredentials", "WeatherSettings", "Calculator", "Alarm", "AlarmSoundPicker", "TimerSoundPicker", "Timer", "Stopwatch", "WeatherForecastDaily", "WeatherForecastHourly", "Notifications", "QuickNotification", "Calendar" };
-static const char *object_names[] = { "main", "incoming_call", "applications", "alarm_triggered", "settings", "media", "wifi_settings", "wifi_credentials", "weather_settings", "calculator", "alarm", "alarm_sound_picker", "timer_sound_picker", "timer", "stopwatch", "weather_forecast_daily", "weather_forecast_hourly", "notifications", "quick_notification", "calendar", "obj0", "obj0__wifi_signal_strength_image", "obj0__battery_not_charging_image_5", "obj0__battery_charging_image_5", "obj0__battery_percent_5", "obj0__obj0", "obj0__obj1", "obj0__obj2", "obj1", "obj1__wifi_signal_strength_image", "obj1__battery_not_charging_image_5", "obj1__battery_charging_image_5", "obj1__battery_percent_5", "obj1__obj0", "obj1__obj1", "obj1__obj2", "obj2", "obj2__wifi_signal_strength_image", "obj2__battery_not_charging_image_5", "obj2__battery_charging_image_5", "obj2__battery_percent_5", "obj2__obj0", "obj2__obj1", "obj2__obj2", "obj3", "obj3__wifi_signal_strength_image", "obj3__battery_not_charging_image_5", "obj3__battery_charging_image_5", "obj3__battery_percent_5", "obj3__obj0", "obj3__obj1", "obj3__obj2", "obj4", "obj4__wifi_signal_strength_image", "obj4__battery_not_charging_image_5", "obj4__battery_charging_image_5", "obj4__battery_percent_5", "obj4__obj0", "obj4__obj1", "obj4__obj2", "obj5", "obj5__wifi_signal_strength_image", "obj5__battery_not_charging_image_5", "obj5__battery_charging_image_5", "obj5__battery_percent_5", "obj5__obj0", "obj5__obj1", "obj5__obj2", "obj6", "obj6__wifi_signal_strength_image", "obj6__battery_not_charging_image_5", "obj6__battery_charging_image_5", "obj6__battery_percent_5", "obj6__obj0", "obj6__obj1", "obj6__obj2", "obj7", "obj7__wifi_signal_strength_image", "obj7__battery_not_charging_image_5", "obj7__battery_charging_image_5", "obj7__battery_percent_5", "obj7__obj0", "obj7__obj1", "obj7__obj2", "obj8", "obj8__wifi_signal_strength_image", "obj8__battery_not_charging_image_5", "obj8__battery_charging_image_5", "obj8__battery_percent_5", "obj8__obj0", "obj8__obj1", "obj8__obj2", "obj9", "obj9__obj3", "obj9__obj4", "obj10", "obj10__wifi_signal_strength_image", "obj10__battery_not_charging_image_5", "obj10__battery_charging_image_5", "obj10__battery_percent_5", "obj10__obj0", "obj10__obj1", "obj10__obj2", "obj11", "obj11__obj5", "obj11__obj6", "obj12", "obj12__wifi_signal_strength_image", "obj12__battery_not_charging_image_5", "obj12__battery_charging_image_5", "obj12__battery_percent_5", "obj12__obj0", "obj12__obj1", "obj12__obj2", "obj13", "obj13__wifi_signal_strength_image", "obj13__battery_not_charging_image_5", "obj13__battery_charging_image_5", "obj13__battery_percent_5", "obj13__obj0", "obj13__obj1", "obj13__obj2", "obj14", "obj15", "obj16", "obj17", "obj18", "obj19", "obj20", "obj21", "obj22", "obj23", "obj24", "obj25", "obj26", "obj27", "obj28", "obj29", "volume_slider", "obj30", "obj31", "obj32", "obj33", "media_volume_down_button", "obj34", "media_pause_button", "media_play_button", "obj35", "media_volum_up_button", "obj36", "obj37", "obj38", "obj39", "obj40", "obj41", "obj42", "obj43", "weather_location_digit1", "weather_location_digit2", "weather_location_digit3", "weather_location_digit4", "weather_location_digit5", "obj44", "obj45", "calculator_button_matrix", "alarm_hour", "alarm_minute", "alarm_am_pm", "alarm_active", "alarm_tone", "obj46", "obj47", "obj48", "obj49", "obj50", "obj51", "obj52", "obj53", "timer_hour", "timer_minute", "timer_second", "timer_run_button", "timer_stop_button", "time_pause_button", "timer_tone", "obj54", "obj55", "obj56", "obj57", "obj58", "obj59", "notification_positive_button", "notification_negative_button", "obj60", "obj61", "obj62", "obj63", "obj64", "calendar_prev_day", "obj65", "calendar_next_day", "obj66", "main_date_container", "year", "day_of_month", "day_of_week", "time_group", "minute", "hour", "sec_dot_arc", "weather_group", "max_min_temp_clock", "weather_degree_icon", "weather_temperature", "weather_short_summary", "weather_icon_small", "daily_steps_group", "daily_steps", "daily_mission", "daily_steps_pct", "obj67", "daily_step_arc", "obj68", "obj69", "obj70", "obj71", "obj72", "obj73", "obj74", "obj75", "obj76", "obj77", "obj78", "obj79", "obj80", "obj81", "obj82", "obj83", "alarm_icon", "snooze", "obj84", "snooze_confirmation", "snooze_icon", "obj85", "obj86", "obj87", "obj88", "obj89", "obj90", "daily_steps_goal_slider", "obj91", "brightness_slider", "obj92", "settings_restart_button", "obj93", "obj94", "settings_black_screen", "obj95", "media_app_image", "media_app_name", "media_image", "obj96", "obj97", "obj98", "media_prev_track_button", "obj99", "media_next_track_button", "obj100", "obj101", "obj102", "obj103", "obj104", "obj105", "obj106", "wifi_available_network_list", "obj107", "obj108", "obj109", "wifi_password_field", "obj110", "obj111", "obj112", "obj113", "obj114", "obj115", "obj116", "obj117", "weather_settings_spinner", "obj118", "calculator_input", "calculator_history", "obj119", "obj120", "obj121", "obj122", "obj123", "obj124", "obj125", "obj126", "obj127", "obj128", "obj129", "obj130", "obj131", "obj132", "obj133", "obj134", "obj135", "obj136", "obj137", "obj138", "obj139", "icon_forecast_0", "obj140", "icon_forecast_1", "obj141", "icon_forecast_2", "obj142", "icon_forecast_3", "obj143", "icon_forecast_4", "obj144", "icon_forecast_5", "obj145", "icon_forecast_6", "obj146", "icon_forecast_7", "obj147", "icon_forecast_8", "obj148", "icon_forecast_9", "daily_forecast_blank", "weather_forecast_daily_gear", "obj149", "obj150", "obj151", "obj152", "obj153", "obj154", "obj155", "obj156", "obj157", "obj158", "obj159", "obj160", "obj161", "obj162", "obj163", "obj164", "obj165", "obj166", "obj167", "obj168", "obj169", "obj170", "weather_icon_large", "obj171", "humidity_icon_2", "obj172", "obj173", "wind_icon_2", "obj174", "obj175", "hour_icon_0", "obj176", "obj177", "hour_icon_1", "obj178", "obj179", "hour_icon_2", "obj180", "obj181", "hour_icon_3", "obj182", "obj183", "hour_icon_4", "obj184", "obj185", "hour_icon_5", "obj186", "obj187", "hour_icon_6", "obj188", "obj189", "hour_icon_7", "weather_forecast_hourly_gear", "obj190", "obj191", "obj192", "obj193", "obj194", "obj195", "obj196", "obj197", "notification_icon_widget", "obj198", "obj199", "obj200", "obj201", "obj202", "obj203", "obj204", "obj205", "quick_notification_icon_widget", "obj206", "obj207", "obj208", "obj209", "obj210", "obj211", "calendar_prev_day_1", "calendar_next_day_1", "obj212", "obj213", "calender_events_container", "obj214", "obj215" };
+static const char *object_names[] = { "main", "incoming_call", "applications", "alarm_triggered", "settings", "media", "wifi_settings", "wifi_credentials", "weather_settings", "calculator", "alarm", "alarm_sound_picker", "timer_sound_picker", "timer", "stopwatch", "weather_forecast_daily", "weather_forecast_hourly", "notifications", "quick_notification", "calendar", "obj0", "obj0__wifi_signal_strength_image", "obj0__battery_not_charging_image_5", "obj0__battery_charging_image_5", "obj0__battery_percent_5", "obj0__obj0", "obj0__obj1", "obj0__obj2", "obj1", "obj1__wifi_signal_strength_image", "obj1__battery_not_charging_image_5", "obj1__battery_charging_image_5", "obj1__battery_percent_5", "obj1__obj0", "obj1__obj1", "obj1__obj2", "obj2", "obj2__wifi_signal_strength_image", "obj2__battery_not_charging_image_5", "obj2__battery_charging_image_5", "obj2__battery_percent_5", "obj2__obj0", "obj2__obj1", "obj2__obj2", "obj3", "obj3__wifi_signal_strength_image", "obj3__battery_not_charging_image_5", "obj3__battery_charging_image_5", "obj3__battery_percent_5", "obj3__obj0", "obj3__obj1", "obj3__obj2", "obj4", "obj4__wifi_signal_strength_image", "obj4__battery_not_charging_image_5", "obj4__battery_charging_image_5", "obj4__battery_percent_5", "obj4__obj0", "obj4__obj1", "obj4__obj2", "obj5", "obj5__wifi_signal_strength_image", "obj5__battery_not_charging_image_5", "obj5__battery_charging_image_5", "obj5__battery_percent_5", "obj5__obj0", "obj5__obj1", "obj5__obj2", "obj6", "obj6__wifi_signal_strength_image", "obj6__battery_not_charging_image_5", "obj6__battery_charging_image_5", "obj6__battery_percent_5", "obj6__obj0", "obj6__obj1", "obj6__obj2", "obj7", "obj7__wifi_signal_strength_image", "obj7__battery_not_charging_image_5", "obj7__battery_charging_image_5", "obj7__battery_percent_5", "obj7__obj0", "obj7__obj1", "obj7__obj2", "obj8", "obj8__wifi_signal_strength_image", "obj8__battery_not_charging_image_5", "obj8__battery_charging_image_5", "obj8__battery_percent_5", "obj8__obj0", "obj8__obj1", "obj8__obj2", "obj9", "obj9__obj3", "obj9__obj4", "obj10", "obj10__wifi_signal_strength_image", "obj10__battery_not_charging_image_5", "obj10__battery_charging_image_5", "obj10__battery_percent_5", "obj10__obj0", "obj10__obj1", "obj10__obj2", "obj11", "obj11__obj5", "obj11__obj6", "obj12", "obj12__wifi_signal_strength_image", "obj12__battery_not_charging_image_5", "obj12__battery_charging_image_5", "obj12__battery_percent_5", "obj12__obj0", "obj12__obj1", "obj12__obj2", "obj13", "obj13__wifi_signal_strength_image", "obj13__battery_not_charging_image_5", "obj13__battery_charging_image_5", "obj13__battery_percent_5", "obj13__obj0", "obj13__obj1", "obj13__obj2", "obj14", "obj15", "obj16", "obj17", "obj18", "obj19", "obj20", "obj21", "obj22", "obj23", "obj24", "obj25", "obj26", "obj27", "obj28", "obj29", "volume_slider", "obj30", "obj31", "obj32", "obj33", "media_volume_down_button", "obj34", "media_pause_button", "media_play_button", "obj35", "media_volum_up_button", "obj36", "obj37", "obj38", "obj39", "obj40", "obj41", "obj42", "obj43", "weather_location_digit1", "weather_location_digit2", "weather_location_digit3", "weather_location_digit4", "weather_location_digit5", "obj44", "obj45", "calculator_button_matrix", "alarm_hour", "alarm_minute", "alarm_am_pm", "alarm_active", "alarm_tone", "obj46", "obj47", "obj48", "obj49", "obj50", "obj51", "obj52", "obj53", "timer_hour", "timer_minute", "timer_second", "timer_run_button", "timer_stop_button", "time_pause_button", "timer_tone", "obj54", "obj55", "obj56", "obj57", "obj58", "obj59", "notification_positive_button", "notification_negative_button", "obj60", "obj61", "obj62", "obj63", "obj64", "calendar_prev_day", "obj65", "calendar_next_day", "obj66", "main_date_container", "year", "day_of_month", "day_of_week", "time_group", "minute", "hour", "sec_dot_arc", "weather_group", "max_min_temp_clock", "weather_degree_icon", "weather_temperature", "weather_short_summary", "weather_icon_small", "daily_steps_group", "daily_steps", "daily_mission", "daily_steps_pct", "obj67", "daily_step_arc", "obj68", "obj69", "obj70", "obj71", "obj72", "obj73", "obj74", "obj75", "obj76", "obj77", "obj78", "obj79", "obj80", "obj81", "obj82", "obj83", "alarm_icon", "snooze", "obj84", "snooze_confirmation", "snooze_icon", "obj85", "obj86", "obj87", "obj88", "obj89", "obj90", "daily_steps_goal_slider", "obj91", "brightness_slider", "obj92", "settings_restart_button", "obj93", "obj94", "settings_black_screen", "obj95", "media_app_image", "media_app_name", "media_image", "obj96", "obj97", "obj98", "obj99", "media_prev_track_button", "obj100", "media_next_track_button", "obj101", "obj102", "obj103", "obj104", "obj105", "obj106", "wifi_available_network_list", "obj107", "obj108", "obj109", "wifi_password_field", "obj110", "obj111", "obj112", "obj113", "obj114", "obj115", "obj116", "obj117", "weather_settings_spinner", "obj118", "calculator_input", "calculator_history", "obj119", "obj120", "obj121", "obj122", "obj123", "obj124", "obj125", "obj126", "obj127", "obj128", "obj129", "obj130", "obj131", "obj132", "obj133", "obj134", "obj135", "obj136", "obj137", "obj138", "obj139", "icon_forecast_0", "obj140", "icon_forecast_1", "obj141", "icon_forecast_2", "obj142", "icon_forecast_3", "obj143", "icon_forecast_4", "obj144", "icon_forecast_5", "obj145", "icon_forecast_6", "obj146", "icon_forecast_7", "obj147", "icon_forecast_8", "obj148", "icon_forecast_9", "daily_forecast_blank", "weather_forecast_daily_gear", "obj149", "obj150", "obj151", "obj152", "obj153", "obj154", "obj155", "obj156", "obj157", "obj158", "obj159", "obj160", "obj161", "obj162", "obj163", "obj164", "obj165", "obj166", "obj167", "obj168", "obj169", "obj170", "weather_icon_large", "obj171", "humidity_icon_2", "obj172", "obj173", "wind_icon_2", "obj174", "obj175", "hour_icon_0", "obj176", "obj177", "hour_icon_1", "obj178", "obj179", "hour_icon_2", "obj180", "obj181", "hour_icon_3", "obj182", "obj183", "hour_icon_4", "obj184", "obj185", "hour_icon_5", "obj186", "obj187", "hour_icon_6", "obj188", "obj189", "hour_icon_7", "weather_forecast_hourly_gear", "obj190", "obj191", "obj192", "obj193", "obj194", "obj195", "obj196", "obj197", "notification_icon_widget", "obj198", "obj199", "obj200", "obj201", "obj202", "obj203", "obj204", "obj205", "quick_notification_icon_widget", "obj206", "obj207", "obj208", "obj209", "obj210", "obj211", "calendar_prev_day_1", "calendar_next_day_1", "obj212", "obj213", "calender_events_container", "obj214", "obj215" };
 
 
 typedef void (*create_screen_func_t)();
