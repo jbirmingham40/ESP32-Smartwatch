@@ -251,15 +251,18 @@ static void psram_free(void *ptr) {
 
 
 void setup() {
+  // Latch power FIRST before any serial delays that would stall battery boot.
+  // Driver_Init uses printf() (UART0) internally so it's safe before Serial.begin().
+  Driver_Init();
+
   Serial.begin(115200);
   Serial.setTxBufferSize(2048);
   delay(200);
-  while (!Serial) { delay(10); }   // key for native USB CDC
+  unsigned long serialWait = millis();
+  while (!Serial && millis() - serialWait < 3000) { delay(10); }  // key for native USB CDC
 
   int ret = mbedtls_platform_set_calloc_free(psram_calloc, psram_free);
   Serial.printf(">> mbedTLS → PSRAM: %s\n", ret == 0 ? "OK" : "FAILED");
-
-  Driver_Init();
   SD_Init();
   Audio_Init();
   LCD_Init();

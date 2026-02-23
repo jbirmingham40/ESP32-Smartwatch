@@ -42,12 +42,12 @@ void Shutdown(void)
   Set_Backlight(0);        
 }
 void PWR_Init(void) {
-  pinMode(PWR_KEY_Input_PIN, INPUT);    
+  pinMode(PWR_KEY_Input_PIN, INPUT);
   pinMode(PWR_Control_PIN, OUTPUT);
-  digitalWrite(PWR_Control_PIN, LOW);
-  vTaskDelay(100);
-  if(!digitalRead(PWR_KEY_Input_PIN)) {   
-    BAT_State = 1;               
-    digitalWrite(PWR_Control_PIN, HIGH);
+  if(!digitalRead(PWR_KEY_Input_PIN)) {   // Button is active-low: pressed = LOW
+    BAT_State = 1;
+    digitalWrite(PWR_Control_PIN, HIGH);  // Latch power immediately
+  } else {
+    digitalWrite(PWR_Control_PIN, LOW);   // Not a battery button boot
   }
 }
