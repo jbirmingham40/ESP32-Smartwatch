@@ -565,8 +565,21 @@ char *Weather::readResponseToPsram(HTTPClient &http, size_t maxSize) {
       return nullptr;
     }
 
-    // Read directly into PSRAM buffer - NO heap use!
-    size_t bytesRead = stream->readBytes(buffer, contentLength);
+    // Read with yielding: only consume stream->available() bytes per iteration so
+    // readBytes() never spin-waits for data that hasn't arrived yet.  Yielding with
+    // vTaskDelay lets IDLE0 run between TCP segments and feed the task watchdog.
+    size_t bytesRead = 0;
+    unsigned long readStart = millis();
+    while (bytesRead < (size_t)contentLength && millis() - readStart < 30000) {
+      int avail = stream->available();
+      if (avail > 0) {
+        int toRead = min(avail, (int)(contentLength - (int)bytesRead));
+        size_t got = stream->readBytes(buffer + bytesRead, toRead);
+        bytesRead += got;
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(5));
+      }
+    }
     buffer[bytesRead] = '\0';
 
     if (bytesRead == 0) {

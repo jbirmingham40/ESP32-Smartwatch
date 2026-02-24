@@ -9,9 +9,13 @@
 #define Device_Restart_Time  15
 #define Device_Shutdown_Time 20
 
+#define SCREEN_TIMEOUT_MS    15000  // Blank display after 15 s of inactivity
+
 void Fall_Asleep(void);
 void Shutdown(void);
 void Restart(void);
 
 void PWR_Init(void);
 void PWR_Loop(void);
+void PWR_UpdateActivity(void);  // Call on any user interaction (touch, button)
+bool PWR_IsDisplayAwake(void);

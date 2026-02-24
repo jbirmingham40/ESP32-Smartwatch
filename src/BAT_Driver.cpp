@@ -1,7 +1,7 @@
 #include "BAT_Driver.h"
 
 #define CHARGING_VOLTAGE 4.0f
-#define MAX_BAT_VOLTAGE 3.95f
+#define MAX_BAT_VOLTAGE 3.9f
 #define MIN_BAT_VOLTAGE 3.0f
 
 float voltage = 0.0;
@@ -31,7 +31,7 @@ void BAT_Get_Volts(void) {
     } else if (voltage < MIN_BAT_VOLTAGE) {
       chargePercentage = 0;
     } else {
-      chargePercentage = ((voltage - MIN_BAT_VOLTAGE) / (MAX_BAT_VOLTAGE - MIN_BAT_VOLTAGE)) * 100;
+      chargePercentage = ((voltage - MIN_BAT_VOLTAGE) / (CHARGING_VOLTAGE - MIN_BAT_VOLTAGE)) * 100;
     }
     sprintf(chargePercentageStr, "%d%%", (int)chargePercentage);
   }

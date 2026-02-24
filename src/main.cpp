@@ -88,44 +88,63 @@ void Driver_Init() {
   QMI8658_Init();
 }
 
+// WiFi is kept OFF between sync windows to save ~30-50 mA average draw.
+// Every WIFI_SYNC_INTERVAL_MS this task wakes the radio, connects, lets
+// onWifiConnected() run (NTP + geo + weather + calendar), waits for the
+// CalFetch task to finish, then powers the radio back down.
+static const unsigned long WIFI_SYNC_INTERVAL_MS = 15UL * 60UL * 1000UL;  // 15 minutes
+
 void Background_Tasks(void *parameters) {
-  unsigned long lastWeatherCheck = 0;
-  unsigned long lastCalendarRefresh = 0;
-  unsigned long now;
+  // Trigger first cycle immediately so the WiFi left on by setup() is shut
+  // down as soon as the initial CalFetch task completes.
+  unsigned long lastSyncTime = millis() - WIFI_SYNC_INTERVAL_MS;
 
   while (1) {
-    now = millis();
+    unsigned long now = millis();
 
-    // NOTE: ble.run() has been moved to its own dedicated BLE_Task (Core 0).
-    // Running BLE I/O in the same task as Wi-Fi (weather/calendar HTTPS) caused
-    // BLE keep-alive starvation: the shared RF hardware was monopolised by Wi-Fi
-    // packets, supervision timeouts fired, NimBLE freed ble_hs_conn, and the next
-    // safeWriteValue/safeReadValue call crashed with LoadProhibited at 0x00000043.
+    if (now - lastSyncTime >= WIFI_SYNC_INTERVAL_MS) {
+      lastSyncTime = now;
 
-    if (now - lastWeatherCheck > 30000) {
-      lastWeatherCheck = now;
-      if (WiFi.isConnected() && locationDataReady) {
-        weather.loadWeather();
+      // Disable asyncReconnect() so UI_Loop_Task doesn't re-open the radio
+      // while we are managing it here.
+      wifiClient.setAutoReconnect(false);
+
+      if (!WiFi.isConnected()) {
+        Serial.println("WiFi sync window: connecting...");
+        if (wifiClient.smartConnect(15000)) {
+          Serial.println("WiFi sync: connected — onWifiConnected fired");
+        } else {
+          Serial.println("WiFi sync: connection failed, skipping this window");
+        }
+      } else {
+        Serial.println("WiFi sync: already connected (initial boot path)");
       }
-    }
 
-    // Calendar fetch runs directly in this task — no separate one-shot task needed.
-    // The one-shot CalFetch task pattern required 32KB of internal RAM per spawn.
-    // With CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y this task's stack is in PSRAM
-    // (see xTaskCreatePinnedToCoreWithCaps below), so giving it enough room for TLS
-    // handshake stack frames costs nothing from internal heap.
-    if (now - lastCalendarRefresh > 600000) {
-      lastCalendarRefresh = now;
+      // Wait for the CalFetch task (spawned inside onWifiConnected → requestFetch)
+      // to finish before killing the radio.  Cap wait at 60 s for safety.
       if (WiFi.isConnected()) {
-        Serial.println("Auto-refreshing calendar (10-minute interval)");
-        calendarFetcher.goToToday();
-        calendarFetcher.fetchCalendarWithRetry(2);
-        calendarFetcher.setDisplayUpdateNeeded();
+        unsigned long fetchWaitStart = millis();
+        while (calendarFetcher.isFetchInProgress() &&
+               millis() - fetchWaitStart < 60000UL) {
+          vTaskDelay(pdMS_TO_TICKS(500));
+        }
       }
+
+      // Disconnect from the AP but keep WiFi in STA mode.
+      // WiFi.mode(WIFI_OFF) saves more power but requires hardware reinitialization
+      // before the next scan, and the 100ms delay in smartConnect() is often not
+      // long enough — the scan returns 0 networks and WiFi never reconnects.
+      // Staying in STA mode while disconnected draws ~5-15 mA (vs ~80 mA connected)
+      // and lets smartConnect() scan immediately on the next cycle.
+      WiFi.setAutoReconnect(false);  // Prevent ESP32 stack from auto-reconnecting
+      WiFi.disconnect(false, false); // Disconnect from AP, keep radio on, keep creds
+      Serial.printf("WiFi cycling: disconnected from AP — next sync in %lu min\n",
+                    WIFI_SYNC_INTERVAL_MS / 60000UL);
     }
 
     // Monitor stack
     static unsigned long lastStackCheck = 0;
+    now = millis();
     if (now - lastStackCheck > 30000) {
       UBaseType_t stackRemaining = uxTaskGetStackHighWaterMark(NULL);
       Serial.printf(">> Background_Tasks stack high-water mark: %d bytes free\n",
@@ -133,10 +152,10 @@ void Background_Tasks(void *parameters) {
       if (stackRemaining * sizeof(StackType_t) < 2000) {
         Serial.println("!! WARNING: Background_Tasks stack getting low !!");
       }
-      lastStackCheck = now;    
+      lastStackCheck = now;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1000));  // 1 s idle — no need to spin at 10 ms
   }
 }
 
@@ -254,6 +273,7 @@ void setup() {
   // Latch power FIRST before any serial delays that would stall battery boot.
   // Driver_Init uses printf() (UART0) internally so it's safe before Serial.begin().
   Driver_Init();
+  setCpuFrequencyMhz(80);  // Scale down from 240 MHz — cuts CPU power draw ~3x
 
   Serial.begin(115200);
   Serial.setTxBufferSize(2048);

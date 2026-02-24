@@ -8,7 +8,8 @@ uint8_t Volume = Volume_MAX;
 
 void IRAM_ATTR increase_audio_tick(void *arg)
 {
-  audio.loop();
+  if (audio.isRunning())
+    audio.loop();
 }
 
 void Audio_Init() {

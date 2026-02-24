@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <vector>
 #include "WiFi.h"
+#include "esp_wifi.h"
 #include "wifi_client.h"
 #include "serializable_configs.h"
 #include "geolocation.h"
@@ -371,26 +372,40 @@ const char *get_var_wifi_ssid() {
 void set_var_wifi_ssid(const char *value) {
 }
 
-int32_t get_var_wifi_signal_strength() {
-  static float signalStrength = WiFi.RSSI();
-  static time_t lastUpdate = time(0);
+// Cached display values — updated while WiFi is live, frozen during cycling off-windows.
+// This prevents the signal/connected icon from changing every 15 minutes when WiFi
+// disconnects between sync windows; the last known good values are shown instead.
+static bool   s_displayConnected = false;
+static int32_t s_displayBars     = 0;   // signal bars 1-4, 0 = no data yet
+static unsigned long s_displayLastUpdate = 0;
 
-  // only update every 20 seconds
-  if (lastUpdate - time(0) > 20000) {
-    if (signalStrength > -25.0f) return 4;
-    else if (signalStrength > -50.0f) return 3;
-    else if (signalStrength > -75.0f) return 2;
-    else return 1;
-  } else {
-    return signalStrength;
+// Call this whenever WiFi is live-connected to keep the cache fresh.
+static void updateWifiDisplayCache() {
+  unsigned long now = millis();
+  // s_displayLastUpdate == 0 means never updated — force immediate first update.
+  if (s_displayLastUpdate != 0 && now - s_displayLastUpdate < 20000) return;
+  s_displayLastUpdate = now;
+  s_displayConnected = WiFi.isConnected();
+  if (s_displayConnected) {
+    int rssi = WiFi.RSSI();
+    if      (rssi > -50) s_displayBars = 4;
+    else if (rssi > -65) s_displayBars = 3;
+    else if (rssi > -75) s_displayBars = 2;
+    else                 s_displayBars = 1;
   }
+}
+
+int32_t get_var_wifi_signal_strength() {
+  if (WiFi.isConnected()) updateWifiDisplayCache();
+  return s_displayBars;
 }
 
 void set_var_wifi_signal_strength(int32_t value) {
 }
 
 bool get_var_wifi_connected() {
-  return wifiClient.isConnected();
+  if (WiFi.isConnected()) updateWifiDisplayCache();
+  return s_displayConnected;
 }
 
 void set_var_wifi_connected(bool value) {
@@ -525,8 +540,11 @@ void WiFi_Client::removeSavedNetwork(const char *ssid) {
 }
 
 void WiFi_Client::asyncReconnect() {
+  // WiFi cycling mode: Background_Tasks owns the radio, do not interfere
+  if (!autoReconnectEnabled) return;
+
   unsigned long now = millis();
-  
+
   // Throttle checks to every 5 seconds
   if (now - lastWiFiCheck < WIFI_CHECK_INTERVAL) {
     return;
@@ -679,16 +697,19 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs) {
       wifiWasConnected = true;
       lastConnectAttempt = millis();
       
+      // Reduce WiFi radio power between DTIM beacons (~50% current saving)
+      esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+
       // Call post-connection callback if set
       if (onConnectedCallback != nullptr) {
         Serial.println("Executing post-connection callback...");
         onConnectedCallback();
       }
-      
+
       return true;
     }
   }
-  
+
   Serial.println("Failed to connect to any saved network");
   WiFi.disconnect();
   wifiWasConnected = false;
@@ -761,12 +782,15 @@ bool WiFi_Client::joinNetwork(const char *ssid, const char *password, uint32_t t
   extern SerializableConfigs serializableConfigs;
   serializableConfigs.write();
   
+  // Reduce WiFi radio power between DTIM beacons
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+
   // Call post-connection callback if set
   if (onConnectedCallback != nullptr) {
     Serial.println("Executing post-connection callback...");
     onConnectedCallback();
   }
-  
+
   return true;
 }
 

@@ -59,13 +59,28 @@ bool GeoLocation::didIpChange() {
 
           // file found at server
           if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-            // CRITICAL FIX: Avoid String allocation - read directly to buffer
+            // Read IP address with explicit yields so IDLE0 can feed the TWDT.
+            // Stream::timedRead() (used by readBytesUntil/readBytes/getString) is a
+            // tight busy-loop on non-blocking sockets: it calls mbedtls_ssl_read()
+            // rapidly, gets WANT_READ, and loops — never yielding, starving IDLE0
+            // and triggering the task watchdog after 5 seconds.
             WiFiClient *stream = https.getStreamPtr();
-            if (stream && stream->available()) {
+            if (stream) {
+              // Wait for body data to arrive with yields instead of spinning.
+              unsigned long waitStart = millis();
+              while (!stream->available() && millis() - waitStart < 5000) {
+                vTaskDelay(pdMS_TO_TICKS(5));
+              }
               char currentIp[16] = {0};
-              size_t len = stream->readBytesUntil('\n', currentIp, sizeof(currentIp) - 1);
+              size_t len = 0;
+              // Read char-by-char; body is tiny (IP address) and all buffered once available().
+              while (len < sizeof(currentIp) - 1 && stream->available()) {
+                char c = (char)stream->read();
+                if (c == '\n' || c == '\r') break;
+                currentIp[len++] = c;
+              }
               currentIp[len] = '\0';
-              
+
               // Trim whitespace
               while (len > 0 && (currentIp[len-1] == '\r' || currentIp[len-1] == '\n' || currentIp[len-1] == ' ')) {
                 currentIp[--len] = '\0';
@@ -290,30 +305,67 @@ char *GeoLocation::readResponseToPsram(HTTPClient &http, size_t maxSize) {
     Serial.printf(">> WARNING: Low heap (%d bytes), skipping HTTP read\n", freeHeap);
     return nullptr;
   }
-  
+
+  int contentLen = http.getSize();
+
+  if (contentLen > (int)maxSize) {
+    Serial.printf(">> Response too large: %d bytes (max %d)\n", contentLen, maxSize);
+    return nullptr;
+  }
+
+  if (contentLen > 0) {
+    // Known Content-Length: allocate exactly the right buffer and read with
+    // explicit yields so IDLE0 can feed the task watchdog between TCP segments.
+    char *buffer = (char *)heap_caps_malloc(contentLen + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buffer) {
+      Serial.println(F(">> PSRAM alloc failed"));
+      return nullptr;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    size_t totalRead = 0;
+    unsigned long readStart = millis();
+    while (totalRead < (size_t)contentLen && millis() - readStart < 30000) {
+      int avail = stream->available();
+      if (avail > 0) {
+        int toRead = min(avail, (int)(contentLen - (int)totalRead));
+        size_t got = stream->readBytes(buffer + totalRead, toRead);
+        totalRead += got;
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(5));  // Yield — lets IDLE0 run and feed the TWDT
+      }
+    }
+    buffer[totalRead] = '\0';
+
+    if (totalRead == 0) {
+      Serial.println(F(">> Empty HTTP response"));
+      heap_caps_free(buffer);
+      return nullptr;
+    }
+
+    Serial.printf(">> Read %d bytes to PSRAM (yielding read)\n", totalRead);
+    return buffer;
+  }
+
+  // Unknown Content-Length (chunked transfer) — fall back to getString().
+  // HTTPClient handles chunked-encoding decoding internally; raw stream reads
+  // would expose chunk-size markers in the data.
   String response = http.getString();
-    
   if (response.length() == 0) {
     Serial.println(F(">> Empty HTTP response"));
     return nullptr;
   }
-
   size_t len = response.length();
   if (len > maxSize) {
     Serial.printf(">> Response too large: %d bytes (max %d)\n", len, maxSize);
     return nullptr;
   }
-
-  // Allocate PSRAM buffer
   char *buffer = (char *)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buffer) {
     Serial.println(F(">> PSRAM alloc failed"));
     return nullptr;
   }
-
-  // Copy to PSRAM immediately, String destroyed on return
   memcpy(buffer, response.c_str(), len + 1);
-  
-  Serial.printf(">> Read %d bytes to PSRAM (temp String allocation)\n", len);
+  Serial.printf(">> Read %d bytes to PSRAM (chunked/getString)\n", len);
   return buffer;
 }

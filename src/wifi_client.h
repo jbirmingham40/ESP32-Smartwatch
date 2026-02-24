@@ -43,6 +43,7 @@ public:
   const char *getPassword();
   void asyncScanUpdate();
   void asyncReconnect();
+  void setAutoReconnect(bool enabled) { autoReconnectEnabled = enabled; }
   
   // Callback to execute after successful WiFi connection
   void setOnConnectedCallback(void (*callback)()) {
@@ -69,6 +70,8 @@ private:
   
   // Callback function to execute after successful connection
   void (*onConnectedCallback)() = nullptr;
+
+  bool autoReconnectEnabled = true;  // set false during WiFi cycling to prevent reconnect
   
   // Helper: Find network in savedNetworks vector
   int findNetworkIndex(const char *ssid);

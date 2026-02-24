@@ -131,7 +131,7 @@ void BLE::begin() {
   NimBLEDevice::setMTU(256);
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, mitm, sc
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // Max power for better connection
+  NimBLEDevice::setPower(ESP_PWR_LVL_N0);  // 0 dBm — plenty for a wrist-worn device
 
   NimBLEServer* pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new MyNimBLEServerCallbacks(this));
@@ -173,7 +173,13 @@ void BLE::begin() {
   NimBLEAdvertisementData scanData;
   scanData.setName("ESP32-SMARTWATCH");
   pAdv->setScanResponseData(scanData);
-  
+
+  // Slower advertising interval saves ~5 mA vs default ~100 ms.
+  // 800 * 0.625 ms = 500 ms min, 1600 * 0.625 ms = 1000 ms max.
+  // Phone still pairs fine; discovery just takes a couple of seconds longer.
+  pAdv->setMinInterval(800);
+  pAdv->setMaxInterval(1600);
+
   pAdv->start();
 }
 

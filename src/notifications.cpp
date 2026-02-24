@@ -1,5 +1,6 @@
 #include "core/lv_disp.h"
 #include "notifications.h"
+#include "PWR_Key.h"
 #include "src/eez-flow.h"
 #include "src/structs.h"
 #include "src/actions.h"
@@ -204,6 +205,8 @@ void action_load_notifications(lv_event_t* e) {
 }
 
 void NotificationStore::showQuickNotification(const QuickNotificationData& data) {
+  PWR_UpdateActivity();  // Wake display for incoming notification
+
   // Static buffer for merged title - avoids heap fragmentation
   static char mergedTitle[260];
 

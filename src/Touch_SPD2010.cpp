@@ -1,4 +1,5 @@
 #include "Touch_SPD2010.h"
+#include "PWR_Key.h"
 
 struct SPD2010_Touch touch_data = {0};
 volatile bool Touch_interrupts = false;
@@ -65,6 +66,9 @@ bool I2C_Write_Touch(uint8_t Driver_addr, uint16_t Reg_addr, const uint8_t *Reg_
 
 void IRAM_ATTR Touch_SPD2010_ISR(void) {
   Touch_interrupts = true;
+  // Do NOT call PWR_UpdateActivity() here: the SPD2010 also fires INT for
+  // controller-internal events (CPU status, aux), not just real touches.
+  // Activity is recorded in Touch_Get_xy() only when points > 0.
 }
 uint8_t Touch_Init(void) {
   SPD2010_Touch_Reset();
@@ -132,6 +136,10 @@ bool Touch_Get_xy(uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_n
     if (strength) {
       strength[i] = touch_data.rpt[i].weight;
     }
+  }
+  /* Real finger touch — reset idle timer */
+  if (*point_num > 0) {
+    PWR_UpdateActivity();
   }
   /* Clear available touch points count */
   touch_data.touch_num = 0;

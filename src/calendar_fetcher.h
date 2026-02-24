@@ -32,6 +32,7 @@ public:
   void requestFetch();
   void setDisplayUpdateNeeded() { displayUpdateNeeded = true; }
   bool checkDisplayUpdate();
+  bool isFetchInProgress() const { return fetchTaskHandle != NULL; }
 
   // Date navigation
   void nextDay();
