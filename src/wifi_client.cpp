@@ -542,6 +542,7 @@ void WiFi_Client::removeSavedNetwork(const char *ssid) {
 void WiFi_Client::asyncReconnect() {
   // WiFi cycling mode: Background_Tasks owns the radio, do not interfere
   if (!autoReconnectEnabled) return;
+  if (WiFi.getMode() == WIFI_MODE_NULL) return;
 
   unsigned long now = millis();
 
@@ -585,7 +586,7 @@ void WiFi_Client::asyncReconnect() {
 }
 
 // Smart device WiFi connection: scan for networks and connect to the strongest saved network
-bool WiFi_Client::smartConnect(uint32_t timeoutMs) {
+bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) {
   Serial.println("=== Starting Smart WiFi Connection ===");
   
   // CRITICAL FIX: Initialize WiFi mode before any operations
@@ -593,7 +594,7 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs) {
   if (WiFi.getMode() == WIFI_MODE_NULL) {
     Serial.println("Initializing WiFi radio...");
     WiFi.mode(WIFI_STA);
-    delay(100);  // Give WiFi stack time to initialize
+    delay(1000);  // Hardware needs ~1 s to fully reinitialise after WIFI_OFF
   }
   
   // If no saved networks, nothing to connect to
@@ -700,8 +701,8 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs) {
       // Reduce WiFi radio power between DTIM beacons (~50% current saving)
       esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 
-      // Call post-connection callback if set
-      if (onConnectedCallback != nullptr) {
+      // Call post-connection callback if requested by caller
+      if (runPostConnectCallback && onConnectedCallback != nullptr) {
         Serial.println("Executing post-connection callback...");
         onConnectedCallback();
       }

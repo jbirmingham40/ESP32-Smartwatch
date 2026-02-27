@@ -18,4 +18,6 @@ void Restart(void);
 void PWR_Init(void);
 void PWR_Loop(void);
 void PWR_UpdateActivity(void);  // Call on any user interaction (touch, button)
+void PWR_RequestWakeFromISR(void);  // ISR-safe wake request
 bool PWR_IsDisplayAwake(void);
+unsigned long PWR_GetDisplaySleepMs(void);  // 0 when awake, else elapsed sleep time

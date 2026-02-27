@@ -6,6 +6,7 @@
     The provided LVGL library file must be installed first
 ******************************************************************************/
 #include "LVGL_Driver.h"
+#include "PWR_Key.h"
 
 static lv_disp_draw_buf_t draw_buf;
 // static lv_color_t buf1[ LVGL_BUF_LEN ];
@@ -35,7 +36,12 @@ void Lvgl_port_rounder_callback(struct _lv_disp_drv_t *disp_drv, lv_area_t *area
     This function implements associating LVGL data to the LCD screen
 */
 void Lvgl_Display_LCD(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
-  LCD_addWindow(area->x1, area->y1, area->x2, area->y2, (uint16_t *)&color_p->full);
+  // Skip the QSPI pixel transfer when the display is off — the backlight is
+  // already blanked so the data would be invisible, and the SPI DMA transfer
+  // wastes power.  Always call lv_disp_flush_ready() so LVGL doesn't stall.
+  if (PWR_IsDisplayAwake()) {
+    LCD_addWindow(area->x1, area->y1, area->x2, area->y2, (uint16_t *)&color_p->full);
+  }
   lv_disp_flush_ready(disp_drv);
 }
 /*Read the touchpad*/
@@ -70,7 +76,9 @@ void Lvgl_Init(void) {
   disp_drv.ver_res = LCD_HEIGHT;
   disp_drv.flush_cb = Lvgl_Display_LCD;
   disp_drv.rounder_cb = Lvgl_port_rounder_callback;
-  disp_drv.full_refresh = 1; /**< 1: Always make the whole screen redrawn*/
+  // Power optimization: avoid full-frame redraw on every LVGL flush.
+  // Let LVGL redraw only invalidated regions.
+  disp_drv.full_refresh = 0;
   disp_drv.draw_buf = &draw_buf;
   lv_disp_drv_register(&disp_drv);
 

@@ -164,3 +164,9 @@ void Set_Backlight(uint8_t Light)                        //
     ledcWrite(LCD_Backlight_PIN, Backlight);
   }
 }
+
+void LCD_Sleep(bool sleep) {
+  if (panel_handle) {
+    esp_lcd_panel_disp_on_off(panel_handle, !sleep);
+  }
+}

@@ -5,8 +5,12 @@
 #include "src/vars.h"
 #include "src/screens.h"
 #include <esp_heap_caps.h> 
+#include "wifi_client.h"
+#include "Audio_PCM5101.h"
 
 CalendarFetcher calendarFetcher;
+extern WiFi_Client wifiClient;
+extern Audio audio;
 
 void action_calendar_date_changed(lv_event_t* e) {
   int monthIndex = eez::flow::getGlobalVariable(FLOW_GLOBAL_VARIABLE_CALENDAR_PICKER_MONTH).getInt();
@@ -804,6 +808,20 @@ bool CalendarFetcher::fetchCalendarWithRetry(int maxRetries) {
       if (attempt > 0) {
         Serial.println("Retry attempt " + String(attempt) + " of " + String(maxRetries) + " for calendar " + String(i + 1));
         delay(1000 * attempt);
+      }
+
+      // If WiFi was cycled off for battery savings, reconnect on-demand so this
+      // calendar retry can actually proceed.
+      if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Calendar fetch: WiFi disconnected, attempting reconnect...");
+        if (!wifiClient.smartConnect(15000, false)) {
+          Serial.println("Calendar fetch: WiFi reconnect failed");
+          if (attempt < maxRetries) {
+            Serial.println("Retrying in " + String(1000 * (attempt + 1)) + "ms...");
+          }
+          continue;
+        }
+        Serial.println("Calendar fetch: WiFi reconnect successful");
       }
 
       if (fetchCalendar(url)) {

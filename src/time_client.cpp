@@ -22,7 +22,9 @@ void TimeClient::syncWithNTP() {
   struct tm timeinfo;
 
   Serial.println(F("Setting up time"));
-  configTime(0, 0, "pool.ntp.org");  // First connect to NTP server, with 0 TZ offset
+  // Use numeric NTP server addresses to avoid SNTP DNS callbacks racing with
+  // concurrent HTTPS DNS resolution during startup.
+  configTime(0, 0, "129.6.15.28", "216.239.35.0");
   if (!getLocalTime(&timeinfo)) {
     Serial.println(F("  Failed to obtain time"));
     return;

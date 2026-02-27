@@ -35,7 +35,7 @@ class WiFi_Client : public SerializableConfig {
 public:
   WiFi_Client() {}
   void startWifi();
-  bool smartConnect(uint32_t timeoutMs = 10000);  // Smart device WiFi connection
+  bool smartConnect(uint32_t timeoutMs = 10000, bool runPostConnectCallback = true);  // Smart device WiFi connection
   bool joinNetwork(const char *ssid, const char *password, uint32_t timeoutMs = 10000);  // Join specific network with timeout
   void setSsid(const char *ssid);
   const char *getSsid();

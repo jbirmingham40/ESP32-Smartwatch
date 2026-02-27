@@ -145,6 +145,11 @@ public:
   // from Core 0 only — prevents concurrent GATT operations across cores.
   std::atomic<bool> amsNeedsManualRefresh{false};
 
+  // Set by BLE_Task after a manual refresh completes. Tells updateMediaUIVariables()
+  // to force an artwork download even when the title/artist haven't changed (i.e.
+  // the user triggered a refresh to retry a failed artwork load for the current song).
+  std::atomic<bool> amsForceArtworkRefresh{false};
+
   class MyNimBLEServerCallbacks : public NimBLEServerCallbacks {
   public:
     MyNimBLEServerCallbacks(BLE* parent) : bleParent(parent) {}

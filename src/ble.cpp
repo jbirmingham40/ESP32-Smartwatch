@@ -784,6 +784,11 @@ void BLE::run() {
       vTaskDelay(pdMS_TO_TICKS(100));
       requestPlayerInfo();
       lastTrackInfoRequest = now;
+      // Force artwork even if title/artist match what UI already knows.
+      // Without this, a manual refresh for the same song (e.g. to retry a
+      // failed artwork load) would not trigger update_album_artwork() because
+      // updateMediaUIVariables() only fires it when titleOrArtistChanged.
+      amsForceArtworkRefresh.store(true, std::memory_order_relaxed);
     }
 
     // ========================================================================
@@ -2045,9 +2050,22 @@ void BLE::updateMediaUIVariables() {
   eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_MEDIA_APP, 
                                eez::StringValue(mediaState->playerName));
 
-  if (titleOrArtistChanged && mediaState->trackTitle[0] != '\0') {
-    Serial.println(F(">> Track changed - updating artwork"));
-    Serial.printf(">> New track: %s - %s\n", mediaState->trackArtist, mediaState->trackTitle);
-    mediaControls.update_album_artwork(mediaState->trackTitle, mediaState->trackArtist, objects.media_image);
+  bool forceArtwork = amsForceArtworkRefresh.exchange(false, std::memory_order_relaxed);
+  if ((titleOrArtistChanged || forceArtwork) && mediaState->trackTitle[0] != '\0') {
+    // Suppress if artwork for this exact title+artist is already loaded.
+    // An AMS playback-state or elapsed-time notification arriving just after
+    // a successful download can re-trigger this path (titleOrArtistChanged due
+    // to a buffer swap) and flash the default image.  Skipping avoids that.
+    if (mediaControls.hasArtworkLoaded(mediaState->trackTitle, mediaState->trackArtist)) {
+      Serial.println(F(">> [AMS] Artwork already loaded for current track — skipping"));
+    } else {
+      if (forceArtwork && !titleOrArtistChanged) {
+        Serial.println(F(">> [AMS] Forcing artwork refresh for current track"));
+      } else {
+        Serial.println(F(">> Track changed - updating artwork"));
+      }
+      Serial.printf(">> Track: %s - %s\n", mediaState->trackArtist, mediaState->trackTitle);
+      mediaControls.update_album_artwork(mediaState->trackTitle, mediaState->trackArtist, objects.media_image);
+    }
   }
 }

@@ -66,9 +66,6 @@ bool I2C_Write_Touch(uint8_t Driver_addr, uint16_t Reg_addr, const uint8_t *Reg_
 
 void IRAM_ATTR Touch_SPD2010_ISR(void) {
   Touch_interrupts = true;
-  // Do NOT call PWR_UpdateActivity() here: the SPD2010 also fires INT for
-  // controller-internal events (CPU status, aux), not just real touches.
-  // Activity is recorded in Touch_Get_xy() only when points > 0.
 }
 uint8_t Touch_Init(void) {
   SPD2010_Touch_Reset();
@@ -104,7 +101,23 @@ void Touch_Read_Data(void) {
   Touch_interrupts = false;
   interrupts();
   if (!shouldRead) {
-    touch_data.touch_num = 0;
+    // Fallback while asleep: some panel/touch combinations can miss/suppress
+    // the first IRQ edge after display sleep. Poll once to detect wake touch.
+    if (!PWR_IsDisplayAwake()) {
+      if (tp_read_data(&touch) == ESP_OK) {
+        touch_cnt = (touch.touch_num > CONFIG_ESP_LCD_TOUCH_MAX_POINTS ? CONFIG_ESP_LCD_TOUCH_MAX_POINTS : touch.touch_num);
+        touch_data.touch_num = touch_cnt;
+        for (int i = 0; i < touch_cnt; i++) {
+          touch_data.rpt[i].x = touch.rpt[i].x;
+          touch_data.rpt[i].y = touch.rpt[i].y;
+          touch_data.rpt[i].weight = touch.rpt[i].weight;
+        }
+      } else {
+        touch_data.touch_num = 0;
+      }
+    } else {
+      touch_data.touch_num = 0;
+    }
     return;
   }
 
@@ -407,4 +420,3 @@ hdp_done_check:
 
   return ESP_OK;
 }
-

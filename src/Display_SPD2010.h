@@ -45,4 +45,9 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
 
 // backlight
 void Backlight_Init();
-void Set_Backlight(uint8_t Light);  
+void Set_Backlight(uint8_t Light);
+
+// Display panel power — puts the SPD2010 controller into sleep/wake mode.
+// Call LCD_Sleep(true) after Set_Backlight(0) to cut panel quiescent current.
+// Call LCD_Sleep(false) before Set_Backlight(brightness) when waking.
+void LCD_Sleep(bool sleep);  
