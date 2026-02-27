@@ -88,62 +88,36 @@ void Driver_Init() {
   QMI8658_Init();
 }
 
-// WiFi is kept OFF between sync windows to save ~30-50 mA average draw.
-// Every WIFI_SYNC_INTERVAL_MS this task wakes the radio, connects, lets
-// onWifiConnected() run (NTP + geo + weather + calendar), waits for the
-// CalFetch task to finish, then powers the radio back down.
+// Periodic data sync interval — how often to reconnect and refresh NTP/geo/weather/calendar.
 static const unsigned long WIFI_SYNC_INTERVAL_MS = 15UL * 60UL * 1000UL;  // 15 minutes
 
 void Background_Tasks(void *parameters) {
-  // Trigger first cycle immediately so the WiFi left on by setup() is shut
-  // down as soon as the initial CalFetch task completes.
+  // Trigger first cycle immediately to cover the WiFi already on from setup().
   unsigned long lastSyncTime = millis() - WIFI_SYNC_INTERVAL_MS;
 
   while (1) {
     unsigned long now = millis();
 
+    // Periodic sync: request a connection every 15 minutes so onWifiConnected()
+    // refreshes NTP, location, weather, and calendar.  WiFi disconnects automatically
+    // 30 seconds after keepAlive() is last called.
     if (now - lastSyncTime >= WIFI_SYNC_INTERVAL_MS) {
       lastSyncTime = now;
+      Serial.println("WiFi sync: requesting periodic connection");
+      wifiClient.keepAlive();
 
-      // Disable asyncReconnect() so UI_Loop_Task doesn't re-open the radio
-      // while we are managing it here.
-      wifiClient.setAutoReconnect(false);
-
-      if (!WiFi.isConnected()) {
-        Serial.println("WiFi sync window: connecting...");
-        if (wifiClient.smartConnect(15000)) {
-          Serial.println("WiFi sync: connected — onWifiConnected fired");
-        } else {
-          Serial.println("WiFi sync: connection failed, skipping this window");
-        }
-      } else {
-        Serial.println("WiFi sync: already connected (initial boot path)");
+      // Keep WiFi alive while the calendar fetch is in progress.  Cap at 60 s.
+      unsigned long fetchWaitStart = millis();
+      while (calendarFetcher.isFetchInProgress() &&
+             millis() - fetchWaitStart < 60000UL) {
+        wifiClient.keepAlive();           // Reset the 30-second idle window
+        vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 s
       }
-
-      // Wait for the CalFetch task (spawned inside onWifiConnected → requestFetch)
-      // to finish before killing the radio.  Cap wait at 60 s for safety.
-      if (WiFi.isConnected()) {
-        unsigned long fetchWaitStart = millis();
-        while (calendarFetcher.isFetchInProgress() &&
-               millis() - fetchWaitStart < 60000UL) {
-          vTaskDelay(pdMS_TO_TICKS(500));
-        }
-      }
-
-      // Disconnect from the AP but keep WiFi in STA mode.
-      // WiFi.mode(WIFI_OFF) saves more power but requires hardware reinitialization
-      // before the next scan, and the 100ms delay in smartConnect() is often not
-      // long enough — the scan returns 0 networks and WiFi never reconnects.
-      // Staying in STA mode while disconnected draws ~5-15 mA (vs ~80 mA connected)
-      // and lets smartConnect() scan immediately on the next cycle.
-      WiFi.setAutoReconnect(false);  // Prevent ESP32 stack from auto-reconnecting
-      WiFi.disconnect(false, false); // Disconnect from AP, keep radio on, keep creds
-      Serial.printf("WiFi cycling: disconnected from AP — next sync in %lu min\n",
-                    WIFI_SYNC_INTERVAL_MS / 60000UL);
     }
 
-    // Handle media artwork WiFi preconnect/hold window outside sync cycles.
-    mediaControls.process_artwork_wifi();
+    // Single lifecycle call: connects when keepAlive() has been called and WiFi is
+    // down; disconnects automatically after 30 seconds of idle.
+    wifiClient.processLifecycle();
 
     // Monitor stack
     static unsigned long lastStackCheck = 0;
@@ -252,7 +226,6 @@ void UI_Loop_Task(void *parameter) {
     mediaControls.apply_pending_artwork();
 
     wifiClient.asyncScanUpdate();
-    wifiClient.asyncReconnect();
 
     vTaskDelay(pdMS_TO_TICKS(5));
   }

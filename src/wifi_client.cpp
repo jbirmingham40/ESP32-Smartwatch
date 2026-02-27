@@ -34,12 +34,7 @@ bool wifiScreenActive = false;
 WifiUiScanResult *pendingWifiUiResult = nullptr;
 bool wifiAsyncReconnectNeeded = false;
 
-// WiFi auto-reconnect variables
-static unsigned long lastWiFiCheck = 0;
-static unsigned long lastConnectAttempt = 0;
-static const unsigned long WIFI_CHECK_INTERVAL = 5000;     // Check every 5 seconds
-static const unsigned long WIFI_RETRY_INTERVAL = 60000;    // Retry every 60 seconds
-static bool wifiWasConnected = false;
+static const unsigned long WIFI_IDLE_TIMEOUT_MS = 30000;  // Disconnect after 30 s idle
 
 // External flag from main .ino file
 extern volatile bool locationDataReady;
@@ -74,6 +69,9 @@ void onWifiConnected() {
   }
 
   Serial.println("=== Post-connection reload complete ===");
+
+  // Reset the idle timer so WiFi stays live for 30 s after all sync operations finish.
+  wifiClient.keepAlive();
 }
 
 // Async callbacks that run on LVGL thread
@@ -539,56 +537,39 @@ void WiFi_Client::removeSavedNetwork(const char *ssid) {
   }
 }
 
-void WiFi_Client::asyncReconnect() {
-  // WiFi cycling mode: Background_Tasks owns the radio, do not interfere
-  if (!autoReconnectEnabled) return;
-  if (WiFi.getMode() == WIFI_MODE_NULL) return;
+// Reset the 30-second idle timer and flag that a connection is needed.
+// Call this whenever WiFi is about to be (or is being) used.
+void WiFi_Client::keepAlive() {
+  wifiLastUsedMs = millis();
+  wifiNeedsConnect = true;
+}
 
-  unsigned long now = millis();
-
-  // Throttle checks to every 5 seconds
-  if (now - lastWiFiCheck < WIFI_CHECK_INTERVAL) {
+// Called once per second from Background_Tasks.
+// Connects on demand (when keepAlive() has been called and WiFi is down)
+// and disconnects automatically after 30 seconds of idle.
+void WiFi_Client::processLifecycle() {
+  if (WiFi.isConnected()) {
+    wifiNeedsConnect = false;
+    if (wifiLastUsedMs > 0 && millis() - wifiLastUsedMs > WIFI_IDLE_TIMEOUT_MS) {
+      Serial.println("WiFi: idle timeout — disconnecting");
+      WiFi.setAutoReconnect(false);
+      WiFi.disconnect(false, false);
+      wifiLastUsedMs = 0;
+    }
     return;
   }
-  lastWiFiCheck = now;
-  
-  bool isConnected = WiFi.isConnected();
-  
-  // Track connection state changes
-  if (isConnected && !wifiWasConnected) {
-    Serial.println("WiFi connection established");
-    wifiWasConnected = true;
-  } else if (!isConnected && wifiWasConnected) {
-    Serial.println("WiFi connection lost!");
-    wifiWasConnected = false;
-  }
-  
-  // If disconnected and have saved networks, try to reconnect every 60 seconds
-  if (!isConnected && savedNetworks.size() > 0) {
-    // Don't retry too frequently
-    if (now - lastConnectAttempt < WIFI_RETRY_INTERVAL) {
-      return;
-    }
-    
-    Serial.println("WiFi disconnected - attempting smart reconnect...");
-    lastConnectAttempt = now;
-    
-    // Attempt smart connect with 30 second total timeout
-    // This will try all saved networks in range
-    if (smartConnect(30000)) {
-      Serial.println("Smart reconnect successful!");
-      wifiWasConnected = true;
-    } else {
-      Serial.println("Smart reconnect failed - will retry in 60 seconds");
-      wifiWasConnected = false;
-    }
+
+  if (wifiNeedsConnect && savedNetworks.size() > 0) {
+    wifiNeedsConnect = false;
+    Serial.println("WiFi: keepAlive requested — connecting");
+    smartConnect(15000);  // onWifiConnected() will call keepAlive() on success
   }
 }
 
 // Smart device WiFi connection: scan for networks and connect to the strongest saved network
 bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) {
   Serial.println("=== Starting Smart WiFi Connection ===");
-  
+
   // CRITICAL FIX: Initialize WiFi mode before any operations
   // This fixes the race condition where WiFi isn't fully initialized at startup
   if (WiFi.getMode() == WIFI_MODE_NULL) {
@@ -596,16 +577,54 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
     WiFi.mode(WIFI_STA);
     delay(1000);  // Hardware needs ~1 s to fully reinitialise after WIFI_OFF
   }
-  
+
   // If no saved networks, nothing to connect to
   if (savedNetworks.size() == 0) {
     Serial.println("No saved networks available");
     return false;
   }
-  
+
   Serial.printf("Found %d saved networks\n", savedNetworks.size());
-  
-  // Step 1: Scan for available networks
+
+  // Step 1: Try the previously connected network directly (no scan needed)
+  if (strlen(ssid) > 0) {
+    int prevIdx = findNetworkIndex(ssid);
+    const char *prevPassword = (prevIdx >= 0) ? savedNetworks[prevIdx].password : password;
+
+    Serial.printf("Trying previously connected network first: %s\n", ssid);
+    WiFi.begin(ssid, prevPassword);
+
+    unsigned long connectStart = millis();
+    const unsigned long quickTimeout = 7000;
+
+    while (WiFi.status() != WL_CONNECTED) {
+      if (millis() - connectStart > quickTimeout) {
+        Serial.printf("Timeout on previous network %s - falling back to scan\n", ssid);
+        WiFi.disconnect();
+        break;
+      }
+      delay(100);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("Connected to previous network %s!\n", ssid);
+      Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
+
+      wifiLastUsedMs = millis();
+      esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+
+      if (runPostConnectCallback && onConnectedCallback != nullptr) {
+        Serial.println("Executing post-connection callback...");
+        onConnectedCallback();
+      }
+
+      return true;
+    }
+
+    Serial.println("Previous network unavailable - falling back to full scan");
+  }
+
+  // Step 2: Fall back to scanning for available networks
   Serial.println("Scanning for available networks...");
   int numNetworks = WiFi.scanNetworks();
   
@@ -693,11 +712,9 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
       // Update current SSID/password
       setSsid(matches[i].ssid);
       setPassword(matches[i].password);
-      
-      // Track connection state for auto-reconnect
-      wifiWasConnected = true;
-      lastConnectAttempt = millis();
-      
+
+      wifiLastUsedMs = millis();
+
       // Reduce WiFi radio power between DTIM beacons (~50% current saving)
       esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 
@@ -713,7 +730,6 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
 
   Serial.println("Failed to connect to any saved network");
   WiFi.disconnect();
-  wifiWasConnected = false;
   return false;
 }
 
@@ -889,13 +905,18 @@ void WiFi_Client::serializeConfig(JsonDocument &doc) {
   Serial.printf("Writing %d wifi networks to storage\n", savedNetworks.size());
   JsonObject wifiDoc = doc["wifi_settings"].to<JsonObject>();
   JsonArray savedNetworksArr = wifiDoc["saved_networks"].to<JsonArray>();
-  
+
   // CRITICAL FIX: Iterate through vector instead of unordered_map
   for (size_t i = 0; i < savedNetworks.size(); i++) {
     JsonObject savedNetworkObj = savedNetworksArr.add<JsonObject>();
     Serial.printf("  Saving %s / %s\n", savedNetworks[i].ssid, savedNetworks[i].password);
     savedNetworkObj["ssid"] = savedNetworks[i].ssid;
     savedNetworkObj["password"] = savedNetworks[i].password;
+  }
+
+  // Persist the last-used SSID so we can try it first on next boot
+  if (strlen(ssid) > 0) {
+    wifiDoc["last_ssid"] = ssid;
   }
 }
 
@@ -941,4 +962,15 @@ void WiFi_Client::deserializeConfig(JsonDocument &doc) {
   }
   
   Serial.printf("Loaded %d saved networks from storage\n", savedNetworks.size());
+
+  // Restore last-used SSID so smartConnect can try it first without scanning
+  const char *lastSsid = wifiDoc["last_ssid"];
+  if (lastSsid && strlen(lastSsid) > 0) {
+    setSsid(lastSsid);
+    int idx = findNetworkIndex(lastSsid);
+    if (idx >= 0) {
+      setPassword(savedNetworks[idx].password);
+    }
+    Serial.printf("Restored last-used network: %s\n", lastSsid);
+  }
 }

@@ -4487,11 +4487,19 @@ ACTION_END
 ACTION_START(imageSetSrc)
     WIDGET_PROP(obj);
     STR_PROP(str);
-    const void *src = getLvglImageByNameHook(str);
+    // Defensive guard: Flow data can occasionally carry a corrupted pointer.
+    // Avoid dereferencing clearly invalid addresses in both lookup and error path.
+    const char *safeStr = str;
+    uintptr_t strAddr = (uintptr_t)str;
+    if (!str || strAddr < 0x3C000000UL || strAddr > 0x7FFFFFFFUL) {
+        safeStr = "<invalid-image-name-ptr>";
+    }
+
+    const void *src = (safeStr == str) ? getLvglImageByNameHook(str) : 0;
     if (src) {
         lv_img_set_src(obj, src);
     } else {
-        throwError(flowState, componentIndex, FlowError::NotFoundInAction("Image", str, "imageSetSrc", actionIndex));
+        throwError(flowState, componentIndex, FlowError::NotFoundInAction("Image", safeStr, "imageSetSrc", actionIndex));
     }
 ACTION_END
 ACTION_START(imageSetAngle)
@@ -7586,6 +7594,7 @@ void (*onFlowErrorHook)(FlowState *flowState, int componentIndex, const char *er
 // -----------------------------------------------------------------------------
 #if defined(EEZ_FOR_LVGL)
 #include <stdio.h>
+#include <esp_memory_utils.h>
 static void replacePageHook(int16_t pageId, uint32_t animType, uint32_t speed, uint32_t delay);
 extern "C" void create_screens();
 extern "C" void tick_screen(int screen_index);
@@ -7609,6 +7618,27 @@ static void (*g_changeColorTheme)(uint32_t themeIndex);
 static uint32_t g_selectedThemeIndex;
 static void (*g_createScreenFunc)(int screenIndex);
 static void (*g_deleteScreenFunc)(int screenIndex);
+
+// Guard against corrupted Flow string pointers reaching strcmp() in image lookup.
+// If the pointer is not in a known readable memory region or is not a bounded
+// C string, fail closed and let the caller raise a Flow "not found" error.
+static bool isLikelyValidImageName(const char *name) {
+    if (!name) {
+        return false;
+    }
+
+    if (!esp_ptr_in_drom(name) && !esp_ptr_in_dram(name) && !esp_ptr_external_ram(name)) {
+        return false;
+    }
+
+    constexpr size_t kMaxImageNameLen = 96;
+    size_t len = strnlen(name, kMaxImageNameLen + 1);
+    if (len == 0 || len > kMaxImageNameLen) {
+        return false;
+    }
+
+    return true;
+}
 static lv_obj_t *getLvglObjectFromIndex(int32_t index) {
     if (index >= 0 && (uint32_t)index < g_numObjects) {
         return g_objects[index];
@@ -7654,6 +7684,10 @@ static int32_t getLvglStyleByName(const char *name) {
     return -1;
 }
 static const void *getLvglImageByName(const char *name) {
+    if (!isLikelyValidImageName(name)) {
+        return 0;
+    }
+
     for (size_t i = 0; i < g_numImages; i++) {
         if (strcmp(g_images[i].name, name) == 0) {
             return g_images[i].img_dsc;

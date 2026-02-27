@@ -42,8 +42,12 @@ public:
   void setPassword(const char *password);
   const char *getPassword();
   void asyncScanUpdate();
-  void asyncReconnect();
-  void setAutoReconnect(bool enabled) { autoReconnectEnabled = enabled; }
+  // Call whenever WiFi is actively being used — resets the 30-second idle timer
+  // and ensures a connection will be established if not already connected.
+  void keepAlive();
+  // Call from the main loop (Background_Tasks) to connect on demand and
+  // disconnect automatically after 30 seconds of idle.
+  void processLifecycle();
   
   // Callback to execute after successful WiFi connection
   void setOnConnectedCallback(void (*callback)()) {
@@ -71,8 +75,9 @@ private:
   // Callback function to execute after successful connection
   void (*onConnectedCallback)() = nullptr;
 
-  bool autoReconnectEnabled = true;  // set false during WiFi cycling to prevent reconnect
-  
+  unsigned long wifiLastUsedMs = 0;  // millis() of last keepAlive() call
+  bool wifiNeedsConnect = false;     // set by keepAlive(); cleared by processLifecycle()
+
   // Helper: Find network in savedNetworks vector
   int findNetworkIndex(const char *ssid);
 };

@@ -20,9 +20,17 @@ extern BLE ble;
 extern WiFi_Client wifiClient;
 extern MediaControls mediaControls;
 
-static const float ARTWORK_WIFI_PRECONNECT_SECONDS = 20.0f;
-static const unsigned long ARTWORK_WIFI_HOLD_MS = 30000UL;
-static const unsigned long ARTWORK_WIFI_CONNECT_RETRY_MS = 10000UL;
+void MediaControls::set_artwork_target_widget(lv_obj_t *widget) {
+  if (artwork_target_widget) {
+    lv_obj_remove_event_cb(artwork_target_widget, artwork_widget_delete_cb);
+  }
+
+  artwork_target_widget = widget;
+
+  if (artwork_target_widget) {
+    lv_obj_add_event_cb(artwork_target_widget, artwork_widget_delete_cb, LV_EVENT_DELETE, nullptr);
+  }
+}
 
 bool MediaControls::safeSendMediaCommand(AMSRemoteCommand cmd, const char *cmdName) {
   if (!Serial) return false;
@@ -103,23 +111,8 @@ void MediaControls::start_async_artwork_update(const char *title, const char *ar
   // freeing the object memory, so artwork_target_widget is nulled while the object
   // is still valid — no probing of potentially-corrupted LVGL internals ever needed.
   
-  // FIX: Always remove then re-add the delete callback — never accumulate duplicates.
-  // The previous code only called lv_obj_remove_event_cb when the widget CHANGED.
-  // When called repeatedly with the SAME widget (e.g. every track change on the media
-  // screen), each call silently added another LV_EVENT_DELETE entry to the same widget's
-  // event list. LVGL does NOT deduplicate event callbacks. Over time this produced a
-  // growing list of redundant entries that LVGL scans on every event dispatch for that
-  // widget, and at deletion the callback fired multiple times (harmless but wasteful).
-  // Fix: unconditionally remove before setting, so the callback is registered exactly once.
-  if (artwork_target_widget) {
-    lv_obj_remove_event_cb(artwork_target_widget, artwork_widget_delete_cb);
-  }
-  
-  artwork_target_widget = widget;
-  
-  if (artwork_target_widget) {
-    lv_obj_add_event_cb(artwork_target_widget, artwork_widget_delete_cb, LV_EVENT_DELETE, nullptr);
-  }
+  // Always remove then re-add the delete callback — never accumulate duplicates.
+  set_artwork_target_widget(widget);
 
   // Reset the debounce timer – each new call restarts the wait
   artwork_request_time = millis();
@@ -151,9 +144,16 @@ static void artwork_task(void *param) {
   // Monitor stack usage for debugging
   UBaseType_t stackStart = uxTaskGetStackHighWaterMark(NULL);
 
+  char request_title[sizeof(async_title)];
+  char request_artist[sizeof(async_artist)];
+  strncpy(request_title, async_title, sizeof(request_title) - 1);
+  request_title[sizeof(request_title) - 1] = '\0';
+  strncpy(request_artist, async_artist, sizeof(request_artist) - 1);
+  request_artist[sizeof(request_artist) - 1] = '\0';
+
   bitmap_image_t new_artwork = { 0 };
 
-  bool ok = mediaControls.get_media_image(async_title, async_artist, &new_artwork);
+  bool ok = mediaControls.get_media_image(request_title, request_artist, &new_artwork);
   
   // Check stack usage before cleanup
   UBaseType_t stackEnd = uxTaskGetStackHighWaterMark(NULL);
@@ -171,6 +171,10 @@ static void artwork_task(void *param) {
       heap_caps_free(staged_artwork.bitmap_data);
     }
     staged_artwork = new_artwork;
+    strncpy(staged_artwork_title, request_title, sizeof(staged_artwork_title) - 1);
+    staged_artwork_title[sizeof(staged_artwork_title) - 1] = '\0';
+    strncpy(staged_artwork_artist, request_artist, sizeof(staged_artwork_artist) - 1);
+    staged_artwork_artist[sizeof(staged_artwork_artist) - 1] = '\0';
 
     // FIX: store with memory_order_release.
     // This is the WRITE side of the release-acquire pair. It guarantees that ALL
@@ -249,6 +253,8 @@ void MediaControls::apply_pending_artwork() {
       invalidate_img_dsc();
       heap_caps_free(current_artwork.bitmap_data);
       current_artwork = { 0 };
+      current_artwork_title[0] = '\0';
+      current_artwork_artist[0] = '\0';
     }
 
     // artwork_target_widget is guaranteed null-safe here:
@@ -281,6 +287,12 @@ void MediaControls::apply_pending_artwork() {
   }
   current_artwork = staged_artwork;
   staged_artwork = { 0 };
+  strncpy(current_artwork_title, staged_artwork_title, sizeof(current_artwork_title) - 1);
+  current_artwork_title[sizeof(current_artwork_title) - 1] = '\0';
+  strncpy(current_artwork_artist, staged_artwork_artist, sizeof(current_artwork_artist) - 1);
+  current_artwork_artist[sizeof(current_artwork_artist) - 1] = '\0';
+  staged_artwork_title[0] = '\0';
+  staged_artwork_artist[0] = '\0';
 
   // artwork_target_widget is null-safe (see LV_EVENT_DELETE comment above).
   if (artwork_target_widget && current_artwork.bitmap_data) {
@@ -318,8 +330,8 @@ bool MediaControls::download_and_convert_artwork(const char *image_url, bitmap_i
       Serial.println(F("[Artwork] Reconnect failed - cannot download image"));
       return false;
     }
-    mark_artwork_wifi_connected();
   }
+  wifiClient.keepAlive();  // Keep WiFi alive for 30 s after this fetch
 
   // Use plain HTTP for CDN image downloads – saves ~50KB of internal heap
   // that would otherwise be consumed by TLS buffers.
@@ -447,8 +459,8 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
       Serial.println(F("[iTunes] Reconnect failed - cannot query artwork API"));
       return false;
     }
-    mark_artwork_wifi_connected();
   }
+  wifiClient.keepAlive();  // Keep WiFi alive for 30 s after this lookup
   
   bool tlsEstablished = false;  // Track if we actually established a TLS connection
 
@@ -620,6 +632,27 @@ void MediaControls::update_lvgl_image(lv_obj_t *img_obj, bitmap_image_t *bitmap)
     }
   }
 
+  // FIX: UNCONDITIONALLY invalidate LVGL's image cache for this descriptor.
+  //
+  // LVGL's image cache (_lv_img_cache_open) matches entries by the SOURCE POINTER,
+  // not by the data the pointer references.  Since img_dsc is a persistent class
+  // member (same address every call), a cache hit returns the old dec_dsc.img_data
+  // — which points to the PREVIOUS track's bitmap that was already freed.
+  //
+  // Sequence that causes the bug:
+  //   1. apply_pending_artwork() calls invalidate_img_dsc() → img_dsc->data = nullptr
+  //   2. heap_caps_free(old_bitmap)
+  //   3. update_lvgl_image() is called
+  //   4. The old guard "if (img_dsc->data)" was FALSE (nulled in step 1)
+  //      → lv_img_cache_invalidate_src was NEVER called
+  //   5. LVGL renders → cache hit for img_dsc → returns dec_dsc.img_data = old_bitmap
+  //   6. LVGL reads freed memory → stale image or garbage displayed
+  //
+  // Fix: always invalidate regardless of img_dsc->data.  lv_img_cache_invalidate_src
+  // compares cache[i].dec_dsc.src == img_dsc (the outer pointer), so it works even
+  // when img_dsc->data is null.
+  lv_img_cache_invalidate_src(img_dsc);
+
   img_dsc->header.always_zero = 0;
   img_dsc->header.w = bitmap->width;
   img_dsc->header.h = bitmap->height;
@@ -633,79 +666,33 @@ void MediaControls::update_lvgl_image(lv_obj_t *img_obj, bitmap_image_t *bitmap)
 }
 
 void MediaControls::update_album_artwork(const char *title, const char *artist, lv_obj_t *artwork_widget) {
-  Serial.println(F("[Artwork] Requesting async artwork update..."));
-  Serial.printf("[Artwork] Title: %s, Artist: %s\n", title ? title : "NULL", artist ? artist : "NULL");
-  start_async_artwork_update(title, artist, artwork_widget);
-}
-
-void MediaControls::update_playback_timing(const char *title, const char *artist, bool isPlaying, float remainingSeconds) {
   const char *safeTitle = title ? title : "";
   const char *safeArtist = artist ? artist : "";
 
-  bool trackChanged =
-      (strcmp(preconnectTrackTitle, safeTitle) != 0) ||
-      (strcmp(preconnectTrackArtist, safeArtist) != 0);
+  bool hasCachedArtworkForTrack =
+      current_artwork.bitmap_data &&
+      strcmp(current_artwork_title, safeTitle) == 0 &&
+      strcmp(current_artwork_artist, safeArtist) == 0;
 
-  if (trackChanged) {
-    strncpy(preconnectTrackTitle, safeTitle, sizeof(preconnectTrackTitle) - 1);
-    preconnectTrackTitle[sizeof(preconnectTrackTitle) - 1] = '\0';
-    strncpy(preconnectTrackArtist, safeArtist, sizeof(preconnectTrackArtist) - 1);
-    preconnectTrackArtist[sizeof(preconnectTrackArtist) - 1] = '\0';
-    preconnectIssuedForTrack = false;
-  }
-
-  if (!isPlaying || safeTitle[0] == '\0' || remainingSeconds < 0.0f) return;
-  if (preconnectIssuedForTrack) return;
-
-  if (remainingSeconds <= ARTWORK_WIFI_PRECONNECT_SECONDS) {
-    preconnectIssuedForTrack = true;
-    artworkWifiConnectRequested.store(true, std::memory_order_relaxed);
-    Serial.printf("[Artwork] Preconnect requested (%.1fs remaining): %s - %s\n",
-                  remainingSeconds, safeArtist, safeTitle);
-  }
-}
-
-void MediaControls::mark_artwork_wifi_connected() {
-  artworkWifiConnectedByArtwork.store(true, std::memory_order_relaxed);
-  artworkWifiHoldUntilMs.store(millis() + ARTWORK_WIFI_HOLD_MS, std::memory_order_relaxed);
-}
-
-void MediaControls::process_artwork_wifi() {
-  unsigned long now = millis();
-
-  if (artworkWifiConnectedByArtwork.load(std::memory_order_relaxed) &&
-      WiFi.isConnected() &&
-      now >= artworkWifiHoldUntilMs.load(std::memory_order_relaxed)) {
-    Serial.println("[Artwork] WiFi hold expired - disconnecting");
-    WiFi.setAutoReconnect(false);
-    WiFi.disconnect(false, false);
-    artworkWifiConnectedByArtwork.store(false, std::memory_order_relaxed);
-    artworkWifiHoldUntilMs.store(0, std::memory_order_relaxed);
-  }
-
-  if (!artworkWifiConnectRequested.load(std::memory_order_relaxed)) return;
-
-  if (WiFi.isConnected()) {
-    if (artworkWifiConnectedByArtwork.load(std::memory_order_relaxed)) {
-      artworkWifiHoldUntilMs.store(now + ARTWORK_WIFI_HOLD_MS, std::memory_order_relaxed);
+  if (hasCachedArtworkForTrack) {
+    set_artwork_target_widget(artwork_widget);
+    if (artwork_target_widget) {
+      update_lvgl_image(artwork_target_widget, &current_artwork);
+      Serial.println(F("[Artwork] Reusing cached artwork for current track"));
+    } else {
+      Serial.println(F("[Artwork] Cached artwork present; widget not active"));
     }
-    artworkWifiConnectRequested.store(false, std::memory_order_relaxed);
     return;
   }
 
-  unsigned long lastAttempt = artworkWifiLastConnectAttemptMs.load(std::memory_order_relaxed);
-  if (now - lastAttempt < ARTWORK_WIFI_CONNECT_RETRY_MS) return;
+  Serial.println(F("[Artwork] Requesting async artwork update..."));
+  Serial.printf("[Artwork] Title: %s, Artist: %s\n", safeTitle, safeArtist);
+  start_async_artwork_update(safeTitle, safeArtist, artwork_widget);
+}
 
-  artworkWifiLastConnectAttemptMs.store(now, std::memory_order_relaxed);
-  Serial.println("[Artwork] Starting preconnect for upcoming track artwork");
-
-  if (wifiClient.smartConnect(10000, false)) {
-    Serial.println("[Artwork] Preconnect successful");
-    mark_artwork_wifi_connected();
-    artworkWifiConnectRequested.store(false, std::memory_order_relaxed);
-  } else {
-    Serial.println("[Artwork] Preconnect failed - will retry");
-  }
+void MediaControls::update_playback_timing(const char *title, const char *artist, bool isPlaying, float remainingSeconds) {
+  // WiFi lifecycle is now managed by wifiClient.keepAlive() / processLifecycle().
+  // No preconnect logic needed here.
 }
 
 // FIX: Nulls img_dsc->data before any free() of the underlying bitmap so that
@@ -730,5 +717,7 @@ void MediaControls::free_artwork() {
     current_artwork.width = 0;
     current_artwork.height = 0;
     current_artwork.size = 0;
+    current_artwork_title[0] = '\0';
+    current_artwork_artist[0] = '\0';
   }
 }
