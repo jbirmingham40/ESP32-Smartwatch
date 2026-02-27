@@ -1967,6 +1967,7 @@ void BLE::updateMediaUIVariables() {
   static char formattedDuration[16];
   static char formattedRemaining[16];
   static char formattedElapsed[16];
+  float remainingSecondsForPreconnect = -1.0f;
   
   strcpy(formattedDuration, "0:00");
   strcpy(formattedRemaining, "0:00");
@@ -2020,6 +2021,7 @@ void BLE::updateMediaUIVariables() {
       
       float remainingSeconds = durationSeconds - interpolatedElapsed;
       if (remainingSeconds < 0) remainingSeconds = 0;
+      remainingSecondsForPreconnect = remainingSeconds;
       
       int remSec = (int)remainingSeconds;
       int remMins = remSec / 60;
@@ -2049,6 +2051,11 @@ void BLE::updateMediaUIVariables() {
   
   eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_MEDIA_APP, 
                                eez::StringValue(mediaState->playerName));
+
+  mediaControls.update_playback_timing(mediaState->trackTitle,
+                                       mediaState->trackArtist,
+                                       isPlaying,
+                                       remainingSecondsForPreconnect);
 
   bool forceArtwork = amsForceArtworkRefresh.exchange(false, std::memory_order_relaxed);
   if ((titleOrArtistChanged || forceArtwork) && mediaState->trackTitle[0] != '\0') {

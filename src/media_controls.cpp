@@ -5,6 +5,7 @@
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
 #include <WiFiClient.h>
+#include <WiFi.h>
 #include <ArduinoJson.h>
 #include <new>
 #include "pngle.h"
@@ -18,6 +19,10 @@
 extern BLE ble;
 extern WiFi_Client wifiClient;
 extern MediaControls mediaControls;
+
+static const float ARTWORK_WIFI_PRECONNECT_SECONDS = 20.0f;
+static const unsigned long ARTWORK_WIFI_HOLD_MS = 30000UL;
+static const unsigned long ARTWORK_WIFI_CONNECT_RETRY_MS = 10000UL;
 
 bool MediaControls::safeSendMediaCommand(AMSRemoteCommand cmd, const char *cmdName) {
   if (!Serial) return false;
@@ -308,8 +313,12 @@ bool MediaControls::download_and_convert_artwork(const char *image_url, bitmap_i
   }
 
   if (!wifiClient.isConnected()) {
-    Serial.println(F("[Artwork] Skipping download - no WiFi connection"));
-    return false;
+    Serial.println(F("[Artwork] WiFi disconnected before image fetch - reconnecting"));
+    if (!wifiClient.smartConnect(10000, false)) {
+      Serial.println(F("[Artwork] Reconnect failed - cannot download image"));
+      return false;
+    }
+    mark_artwork_wifi_connected();
   }
 
   // Use plain HTTP for CDN image downloads – saves ~50KB of internal heap
@@ -433,8 +442,12 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
   }
 
   if (!wifiClient.isConnected()) {
-    Serial.println(F("[iTunes] Skipping API call - no WiFi connection"));
-    return false;
+    Serial.println(F("[iTunes] WiFi disconnected - reconnecting for artwork lookup"));
+    if (!wifiClient.smartConnect(15000, false)) {
+      Serial.println(F("[iTunes] Reconnect failed - cannot query artwork API"));
+      return false;
+    }
+    mark_artwork_wifi_connected();
   }
   
   bool tlsEstablished = false;  // Track if we actually established a TLS connection
@@ -623,6 +636,76 @@ void MediaControls::update_album_artwork(const char *title, const char *artist, 
   Serial.println(F("[Artwork] Requesting async artwork update..."));
   Serial.printf("[Artwork] Title: %s, Artist: %s\n", title ? title : "NULL", artist ? artist : "NULL");
   start_async_artwork_update(title, artist, artwork_widget);
+}
+
+void MediaControls::update_playback_timing(const char *title, const char *artist, bool isPlaying, float remainingSeconds) {
+  const char *safeTitle = title ? title : "";
+  const char *safeArtist = artist ? artist : "";
+
+  bool trackChanged =
+      (strcmp(preconnectTrackTitle, safeTitle) != 0) ||
+      (strcmp(preconnectTrackArtist, safeArtist) != 0);
+
+  if (trackChanged) {
+    strncpy(preconnectTrackTitle, safeTitle, sizeof(preconnectTrackTitle) - 1);
+    preconnectTrackTitle[sizeof(preconnectTrackTitle) - 1] = '\0';
+    strncpy(preconnectTrackArtist, safeArtist, sizeof(preconnectTrackArtist) - 1);
+    preconnectTrackArtist[sizeof(preconnectTrackArtist) - 1] = '\0';
+    preconnectIssuedForTrack = false;
+  }
+
+  if (!isPlaying || safeTitle[0] == '\0' || remainingSeconds < 0.0f) return;
+  if (preconnectIssuedForTrack) return;
+
+  if (remainingSeconds <= ARTWORK_WIFI_PRECONNECT_SECONDS) {
+    preconnectIssuedForTrack = true;
+    artworkWifiConnectRequested.store(true, std::memory_order_relaxed);
+    Serial.printf("[Artwork] Preconnect requested (%.1fs remaining): %s - %s\n",
+                  remainingSeconds, safeArtist, safeTitle);
+  }
+}
+
+void MediaControls::mark_artwork_wifi_connected() {
+  artworkWifiConnectedByArtwork.store(true, std::memory_order_relaxed);
+  artworkWifiHoldUntilMs.store(millis() + ARTWORK_WIFI_HOLD_MS, std::memory_order_relaxed);
+}
+
+void MediaControls::process_artwork_wifi() {
+  unsigned long now = millis();
+
+  if (artworkWifiConnectedByArtwork.load(std::memory_order_relaxed) &&
+      WiFi.isConnected() &&
+      now >= artworkWifiHoldUntilMs.load(std::memory_order_relaxed)) {
+    Serial.println("[Artwork] WiFi hold expired - disconnecting");
+    WiFi.setAutoReconnect(false);
+    WiFi.disconnect(false, false);
+    artworkWifiConnectedByArtwork.store(false, std::memory_order_relaxed);
+    artworkWifiHoldUntilMs.store(0, std::memory_order_relaxed);
+  }
+
+  if (!artworkWifiConnectRequested.load(std::memory_order_relaxed)) return;
+
+  if (WiFi.isConnected()) {
+    if (artworkWifiConnectedByArtwork.load(std::memory_order_relaxed)) {
+      artworkWifiHoldUntilMs.store(now + ARTWORK_WIFI_HOLD_MS, std::memory_order_relaxed);
+    }
+    artworkWifiConnectRequested.store(false, std::memory_order_relaxed);
+    return;
+  }
+
+  unsigned long lastAttempt = artworkWifiLastConnectAttemptMs.load(std::memory_order_relaxed);
+  if (now - lastAttempt < ARTWORK_WIFI_CONNECT_RETRY_MS) return;
+
+  artworkWifiLastConnectAttemptMs.store(now, std::memory_order_relaxed);
+  Serial.println("[Artwork] Starting preconnect for upcoming track artwork");
+
+  if (wifiClient.smartConnect(10000, false)) {
+    Serial.println("[Artwork] Preconnect successful");
+    mark_artwork_wifi_connected();
+    artworkWifiConnectRequested.store(false, std::memory_order_relaxed);
+  } else {
+    Serial.println("[Artwork] Preconnect failed - will retry");
+  }
 }
 
 // FIX: Nulls img_dsc->data before any free() of the underlying bitmap so that

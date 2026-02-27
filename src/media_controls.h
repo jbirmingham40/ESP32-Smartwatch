@@ -64,6 +64,8 @@ public:
   bool get_media_image(const char *title, const char *artist, bitmap_image_t *out_image);
   bool safeSendMediaCommand(AMSRemoteCommand cmd, const char *cmdName);
   void update_album_artwork(const char *title, const char *artist, lv_obj_t *artwork_widget);
+  void update_playback_timing(const char *title, const char *artist, bool isPlaying, float remainingSeconds);
+  void process_artwork_wifi();
   void apply_pending_artwork();
 
   // Call this from Core 1 whenever artwork_target_widget is about to be destroyed.
@@ -97,6 +99,7 @@ private:
   void launch_artwork_task();
   void free_artwork();
   void invalidate_img_dsc();  // FIX: nulls img_dsc->data so LVGL never renders freed bitmap
+  void mark_artwork_wifi_connected();
 
   void urlEncode(const char *src, char *dst, size_t dstSize);
 
@@ -107,6 +110,19 @@ private:
   // update_lvgl_image() call, which produces a use-after-free if a redraw fires
   // in that window (common during screen transitions).
   lv_img_dsc_t *img_dsc = nullptr;
+
+  // Artwork WiFi lifecycle manager:
+  // - preconnect near end of track (UI core)
+  // - connect/disconnect + hold window (background core)
+  std::atomic<bool> artworkWifiConnectRequested{false};
+  std::atomic<bool> artworkWifiConnectedByArtwork{false};
+  std::atomic<unsigned long> artworkWifiHoldUntilMs{0};
+  std::atomic<unsigned long> artworkWifiLastConnectAttemptMs{0};
+
+  // Track-level preconnect gating (UI core only)
+  char preconnectTrackTitle[128] = {0};
+  char preconnectTrackArtist[128] = {0};
+  bool preconnectIssuedForTrack = false;
 };
 
 #endif /* media_controls_h */

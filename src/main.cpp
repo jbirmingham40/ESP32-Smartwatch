@@ -142,6 +142,9 @@ void Background_Tasks(void *parameters) {
                     WIFI_SYNC_INTERVAL_MS / 60000UL);
     }
 
+    // Handle media artwork WiFi preconnect/hold window outside sync cycles.
+    mediaControls.process_artwork_wifi();
+
     // Monitor stack
     static unsigned long lastStackCheck = 0;
     now = millis();
