@@ -2052,20 +2052,12 @@ void BLE::updateMediaUIVariables() {
 
   bool forceArtwork = amsForceArtworkRefresh.exchange(false, std::memory_order_relaxed);
   if ((titleOrArtistChanged || forceArtwork) && mediaState->trackTitle[0] != '\0') {
-    // Suppress if artwork for this exact title+artist is already loaded.
-    // An AMS playback-state or elapsed-time notification arriving just after
-    // a successful download can re-trigger this path (titleOrArtistChanged due
-    // to a buffer swap) and flash the default image.  Skipping avoids that.
-    if (mediaControls.hasArtworkLoaded(mediaState->trackTitle, mediaState->trackArtist)) {
-      Serial.println(F(">> [AMS] Artwork already loaded for current track — skipping"));
+    if (forceArtwork && !titleOrArtistChanged) {
+      Serial.println(F(">> [AMS] Forcing artwork refresh for current track"));
     } else {
-      if (forceArtwork && !titleOrArtistChanged) {
-        Serial.println(F(">> [AMS] Forcing artwork refresh for current track"));
-      } else {
-        Serial.println(F(">> Track changed - updating artwork"));
-      }
-      Serial.printf(">> Track: %s - %s\n", mediaState->trackArtist, mediaState->trackTitle);
-      mediaControls.update_album_artwork(mediaState->trackTitle, mediaState->trackArtist, objects.media_image);
+      Serial.println(F(">> Track changed - updating artwork"));
     }
+    Serial.printf(">> Track: %s - %s\n", mediaState->trackArtist, mediaState->trackTitle);
+    mediaControls.update_album_artwork(mediaState->trackTitle, mediaState->trackArtist, objects.media_image);
   }
 }
