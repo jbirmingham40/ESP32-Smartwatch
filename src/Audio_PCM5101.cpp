@@ -3,13 +3,16 @@
 #define AUDIO_TICK_PERIOD_MS 1
 
 Audio audio;
+static esp_timer_handle_t s_audio_tick_timer = NULL;
 
 uint8_t Volume = Volume_MAX;
 
-void IRAM_ATTR increase_audio_tick(void *arg)
+void increase_audio_tick(void *arg)
 {
   if (audio.isRunning())
     audio.loop();
+  else
+    esp_timer_stop(s_audio_tick_timer);
 }
 
 void Audio_Init() {
@@ -17,15 +20,21 @@ void Audio_Init() {
   audio.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
   audio.setVolume(Volume); // 0...21    
 
-  esp_timer_handle_t audio_tick_timer = NULL;
   const esp_timer_create_args_t audio_tick_timer_args = {
     .callback = &increase_audio_tick,
-    .dispatch_method = ESP_TIMER_TASK,  
+    .dispatch_method = ESP_TIMER_TASK,
     .name = "audio_tick",
-    .skip_unhandled_events = true       
+    .skip_unhandled_events = true
   };
-  esp_timer_create(&audio_tick_timer_args, &audio_tick_timer);
-  esp_timer_start_periodic(audio_tick_timer, AUDIO_TICK_PERIOD_MS * 1000);
+  esp_timer_create(&audio_tick_timer_args, &s_audio_tick_timer);
+}
+
+void Audio_StopTickTimer(void) {
+  if (s_audio_tick_timer) esp_timer_stop(s_audio_tick_timer);
+}
+
+void Audio_StartTickTimer(void) {
+  if (s_audio_tick_timer) esp_timer_start_periodic(s_audio_tick_timer, AUDIO_TICK_PERIOD_MS * 1000);
 }
 
 void Volume_adjustment(uint8_t Volume) {
@@ -43,9 +52,10 @@ void Play_Music_test() {
     printf("File 'A.mp3' not found in root directory.\r\n");
   }
   bool ret = audio.connecttoFS(SD_MMC,"/A.mp3");
-  if(ret) 
+  if(ret) {
     printf("Music Read OK\r\n");
-  else
+    Audio_StartTickTimer();
+  } else
     printf("Music Read Failed\r\n");
 }
 
@@ -64,9 +74,10 @@ void Play_Music(const char* directory, const char* fileName) {
   // printf("%s AAAAAAAA.\r\n",filePath);    
   if(!audio.isRunning()) {
     bool ret = audio.connecttoFS(SD_MMC,(char*)filePath);
-    if(ret) 
+    if(ret) {
       printf("Music Read OK\r\n");
-    else
+      Audio_StartTickTimer();
+    } else
       printf("Music Read Failed\r\n");
   }
   vTaskDelay(pdMS_TO_TICKS(100));    
@@ -78,10 +89,11 @@ void Music_pause() {
   }
 }
 void Music_resume() {
-  if (!audio.isRunning()) {           
-    audio.pauseResume();             
+  if (!audio.isRunning()) {
+    audio.pauseResume();
+    Audio_StartTickTimer();
     printf("The music begins\r\n");
-  } 
+  }
 }
 
 uint32_t Music_Duration() {

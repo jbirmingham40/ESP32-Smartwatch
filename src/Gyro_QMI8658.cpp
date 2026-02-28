@@ -11,8 +11,8 @@ IMUdata Gyro;
 uint8_t Device_addr ; // default for SD0/SA0 low, 0x6A if high
 acc_scale_t acc_scale = ACC_RANGE_4G;
 gyro_scale_t gyro_scale = GYR_RANGE_64DPS;
-acc_odr_t acc_odr = acc_odr_norm_120;   // 120 Hz — more than enough for step detection
-gyro_odr_t gyro_odr = gyro_odr_norm_120;
+acc_odr_t acc_odr = acc_odr_norm_30;    // 30 Hz — sufficient for step detection (200ms debounce)
+gyro_odr_t gyro_odr = gyro_odr_norm_30;
 sensor_state_t sensor_state = sensor_default;
 lpf_t acc_lpf;
 
@@ -92,6 +92,13 @@ void QMI8658_Init(void)
 
 void QMI8658_Loop(void)
 {
+  // Throttle IMU reads when display is off — step detection still works at lower rate
+  if (!PWR_IsDisplayAwake()) {
+    static unsigned long lastSleepRead = 0;
+    if (millis() - lastSleepRead < 500) return;  // 2Hz when sleeping
+    lastSleepRead = millis();
+  }
+
   getAccelerometer();
   if (detectStep()) {
     PWR_UpdateActivity();  // Wake display on step (wrist-raise proxy)
@@ -260,9 +267,10 @@ void setState(sensor_state_t state)
         QMI8658_transmit(QMI8658_CTRL1, ctrl1);
 
         // enable high speed internal clock,
-        // acc and gyro in full mode, and
+        // acc in full mode, gyro disabled (bit 1 = gyro enable),
         // disable syncSample mode
-        QMI8658_transmit(QMI8658_CTRL7, 0x43);
+        // Gyro is not used for step detection — saves ~3-5mA
+        QMI8658_transmit(QMI8658_CTRL7, 0x41);
 
         // disable AttitudeEngine Motion On Demand
         QMI8658_transmit(QMI8658_CTRL6, 0x00);

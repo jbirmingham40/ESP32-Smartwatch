@@ -17,6 +17,8 @@ void Play_Music_test();
 void Audio_Loop();
 
 void Audio_Init();
+void Audio_StopTickTimer(void);
+void Audio_StartTickTimer(void);
 void Volume_adjustment(uint8_t Volume);
 void Play_Music(const char* directory, const char* fileName);
 void Music_pause(); 

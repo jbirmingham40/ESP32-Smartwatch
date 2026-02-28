@@ -49,15 +49,23 @@ MediaControls mediaControls;
 volatile bool locationDataReady = false;
 
 void Driver_Loop(void *parameter) {
-  unsigned long lastTimeRefresh = 0;
-  unsigned long now;
+  unsigned long lastSensorRead = 0;
 
   while (1) {
+    // PWR_Loop always runs at 100ms — it drives the display wake/sleep state machine.
     PWR_Loop();
-    QMI8658_Loop();
-    PCF85063_Loop();
-    BAT_Get_Volts();
-    timeClient.refresh();
+
+    // Sensor and time reads only need ~2Hz when display is off.
+    // When display is on, run at full 10Hz (every 100ms).
+    unsigned long sensorInterval = PWR_IsDisplayAwake() ? 100UL : 500UL;
+    unsigned long now = millis();
+    if (now - lastSensorRead >= sensorInterval) {
+      lastSensorRead = now;
+      QMI8658_Loop();
+      PCF85063_Loop();
+      BAT_Get_Volts();
+      timeClient.refresh();
+    }
 
     // Monitor stack usage — kept at 8KB for safety, but measure for future optimization
     static unsigned long lastStackCheck = 0;
@@ -164,7 +172,10 @@ void BLE_Task(void *parameter) {
     // Without this, BLE_Task (priority 4) spins continuously and starves
     // IDLE0 (priority 0), causing a watchdog reboot every ~5 seconds when
     // ble.run() returns quickly (e.g. phone not connected).
-    vTaskDelay(pdMS_TO_TICKS(10));
+    // 10 ms (100 Hz) when display is on for responsive notifications/media.
+    // 100 ms (10 Hz) when display is off — NimBLE callbacks still fire on
+    // their own; this only controls how often we poll ble.run() for work.
+    vTaskDelay(pdMS_TO_TICKS(PWR_IsDisplayAwake() ? 10 : 100));
   }
 }
 

@@ -551,9 +551,10 @@ void WiFi_Client::processLifecycle() {
   if (WiFi.isConnected()) {
     wifiNeedsConnect = false;
     if (wifiLastUsedMs > 0 && millis() - wifiLastUsedMs > WIFI_IDLE_TIMEOUT_MS) {
-      Serial.println("WiFi: idle timeout — disconnecting");
+      Serial.println("WiFi: idle timeout — powering off radio");
       WiFi.setAutoReconnect(false);
       WiFi.disconnect(false, false);
+      WiFi.mode(WIFI_OFF);  // Fully power down radio (~20mA savings vs idle STA)
       wifiLastUsedMs = 0;
     }
     return;
