@@ -2,6 +2,7 @@
 #include "esp_heap_caps.h"
 #include <Arduino.h>
 #include <notifications.h>
+#include "BAT_Driver.h"
 
 extern NotificationStore notificationStore;
 
@@ -110,23 +111,23 @@ void monitor_heap() {
   if (now - lastCheck < 30000) return;
   lastCheck = now;
 
-  size_t freePsram = ESP.getFreePsram();
+  if (BAT_Is_Charging()) {
+    size_t freePsram = ESP.getFreePsram();
+    Serial.println(F("======================================"));
+    Serial.printf("Free heap: %d bytes (min: %d) [%s]\n",
+                  freeHeap, minFreeHeap,
+                  currentMemoryPressure == MEMORY_OK ? "OK" :
+                  currentMemoryPressure == MEMORY_LOW ? "LOW" : "CRITICAL");
+    Serial.printf("Free PSRAM: %d bytes\n", freePsram);
+    Serial.printf("Notifications: %d total, %d unviewed\n",
+                  notificationStore.getTotalCount(),
+                  notificationStore.getUnviewedCount());
+    Serial.println(F("======================================"));
+  }
 
-  Serial.println(F("======================================"));
-  Serial.printf("Free heap: %d bytes (min: %d) [%s]\n", 
-                freeHeap, minFreeHeap, 
-                currentMemoryPressure == MEMORY_OK ? "OK" : 
-                currentMemoryPressure == MEMORY_LOW ? "LOW" : "CRITICAL");
-  Serial.printf("Free PSRAM: %d bytes\n", freePsram);
-  Serial.printf("Notifications: %d total, %d unviewed\n",
-                notificationStore.getTotalCount(),
-                notificationStore.getUnviewedCount());
-  Serial.println(F("======================================"));
-
-  // Warn if heap is getting low
+  // Warn if heap is getting low (always print — useful on battery for catching crashes)
   if (freeHeap < 35000) {
     Serial.println(">> WARNING: Low heap memory!");
-    // Check heap integrity when low
     if (!heap_caps_check_integrity_all(true)) {
       Serial.println(">> CRITICAL: Heap corruption detected!");
     }

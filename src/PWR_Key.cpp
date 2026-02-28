@@ -1,4 +1,5 @@
 #include "PWR_Key.h"
+#include "BAT_Driver.h"
 
 static uint8_t BAT_State = 0;
 static uint8_t Device_State = 0;
@@ -34,6 +35,7 @@ void Fall_Asleep(void) {
   displaySleepStartMs = millis();
   wakeRequestFromIsr = false;
   Set_Backlight(0);
+  LCD_Sleep(true);
 }
 
 void Restart(void) {
@@ -61,6 +63,7 @@ void PWR_Loop(void) {
     if (now - lastActivityTime < 500) {
       displayAwake = true;
       displaySleepStartMs = 0;
+      LCD_Sleep(false);
       Set_Backlight(LCD_Backlight);
     }
   }
@@ -90,10 +93,12 @@ void PWR_Loop(void) {
 
   if (now - lastPowerLog >= 60000) {
     lastPowerLog = now;
-    Serial.printf("[Power] display=%s idle_ms=%lu backlight=%u\n",
-                  displayAwake ? "on" : "off",
-                  (unsigned long)(now - lastActivityTime),
-                  (unsigned)LCD_Backlight);
+    if (BAT_Is_Charging()) {
+      Serial.printf("[Power] display=%s idle_ms=%lu backlight=%u\n",
+                    displayAwake ? "on" : "off",
+                    (unsigned long)(now - lastActivityTime),
+                    (unsigned)LCD_Backlight);
+    }
   }
 }
 

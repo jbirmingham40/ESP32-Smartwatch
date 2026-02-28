@@ -33,9 +33,7 @@ void MediaControls::set_artwork_target_widget(lv_obj_t *widget) {
 }
 
 bool MediaControls::safeSendMediaCommand(AMSRemoteCommand cmd, const char *cmdName) {
-  if (!Serial) return false;
   Serial.printf(">> Media: %s\n", cmdName);
-  delay(10);
   try {
     ble.sendMediaCommand(cmd);
     return true;
@@ -77,7 +75,6 @@ void action_media_volume_down(lv_event_t *e) {
 }
 
 void action_refresh_media_info(lv_event_t *e) {
-  if (!Serial) return;
   // FIX: Do NOT call requestTrackInfo/requestPlayerInfo from Core 1 (UI task).
   // Those functions do blocking GATT writes+reads. Calling from Core 1 while
   // BLE_Task on Core 0 is also doing GATT operations causes interleaved

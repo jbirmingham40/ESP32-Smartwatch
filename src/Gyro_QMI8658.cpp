@@ -92,8 +92,21 @@ void QMI8658_Init(void)
 
 void QMI8658_Loop(void)
 {
+  bool displayAwake = PWR_IsDisplayAwake();
+
+  // Switch accelerometer ODR when the display sleep/wake state changes.
+  // awake  → 30 Hz normal mode  (acc_odr_norm_30):  ~0.45 mA — fast enough for UI
+  // asleep → 3 Hz low-power mode (acc_odr_lp_3):   ~0.013 mA — covers 2 Hz poll rate
+  // Saving ~0.43 mA for the ~85% of time the display is off.
+  static bool lastDisplayState = true;
+  if (displayAwake != lastDisplayState) {
+    lastDisplayState = displayAwake;
+    setAccODR(displayAwake ? acc_odr_norm_30 : acc_odr_lp_3);
+    Serial.printf(">> IMU ODR: %s\n", displayAwake ? "30Hz normal" : "3Hz low-power");
+  }
+
   // Throttle IMU reads when display is off — step detection still works at lower rate
-  if (!PWR_IsDisplayAwake()) {
+  if (!displayAwake) {
     static unsigned long lastSleepRead = 0;
     if (millis() - lastSleepRead < 500) return;  // 2Hz when sleeping
     lastSleepRead = millis();

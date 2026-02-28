@@ -26,6 +26,7 @@
 #include "media_controls.h"
 #include "calendar_fetcher.h"
 #include "esp_core_dump.h"
+#include "esp_pm.h"
 
 extern CalendarFetcher calendarFetcher;
 
@@ -71,8 +72,10 @@ void Driver_Loop(void *parameter) {
     static unsigned long lastStackCheck = 0;
     if (millis() - lastStackCheck > 30000) {
       UBaseType_t stackRemaining = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf(">> Driver_Loop stack: %d bytes free\n",
-                    stackRemaining * sizeof(StackType_t));
+      if (BAT_Is_Charging()) {
+        Serial.printf(">> Driver_Loop stack: %d bytes free\n",
+                      stackRemaining * sizeof(StackType_t));
+      }
       if (stackRemaining * sizeof(StackType_t) < 1024) {
         Serial.printf("!! WARNING: Driver_Loop stack low: %d bytes free !!\n",
                       stackRemaining * sizeof(StackType_t));
@@ -97,7 +100,9 @@ void Driver_Init() {
 }
 
 // Periodic data sync interval — how often to reconnect and refresh NTP/geo/weather/calendar.
-static const unsigned long WIFI_SYNC_INTERVAL_MS = 15UL * 60UL * 1000UL;  // 15 minutes
+// 30 minutes is sufficient: NTP drift is negligible, weather changes slowly, and each
+// WiFi-on window costs ~0.67mAh; halving frequency saves ~20mAh over a full day.
+static const unsigned long WIFI_SYNC_INTERVAL_MS = 30UL * 60UL * 1000UL;  // 30 minutes
 
 void Background_Tasks(void *parameters) {
   // Trigger first cycle immediately to cover the WiFi already on from setup().
@@ -114,13 +119,17 @@ void Background_Tasks(void *parameters) {
       Serial.println("WiFi sync: requesting periodic connection");
       wifiClient.keepAlive();
 
-      // Keep WiFi alive while the calendar fetch is in progress.  Cap at 60 s.
+      // Keep WiFi alive while the calendar fetch is in progress.  Cap at 90 s
+      // (was 5 min — a slow/unreachable server was keeping WiFi on for minutes
+      // every sync cycle, which is a significant battery drain).
       unsigned long fetchWaitStart = millis();
       while (calendarFetcher.isFetchInProgress() &&
-             millis() - fetchWaitStart < 60000UL) {
+             millis() - fetchWaitStart < 90000UL) {
         wifiClient.keepAlive();           // Reset the 30-second idle window
         vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 s
       }
+      Serial.printf("WiFi sync: calendar wait ended after %lus\n",
+                    (millis() - fetchWaitStart) / 1000UL);
     }
 
     // Single lifecycle call: connects when keepAlive() has been called and WiFi is
@@ -132,8 +141,10 @@ void Background_Tasks(void *parameters) {
     now = millis();
     if (now - lastStackCheck > 30000) {
       UBaseType_t stackRemaining = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf(">> Background_Tasks stack high-water mark: %d bytes free\n",
-                    stackRemaining * sizeof(StackType_t));
+      if (BAT_Is_Charging()) {
+        Serial.printf(">> Background_Tasks stack high-water mark: %d bytes free\n",
+                      stackRemaining * sizeof(StackType_t));
+      }
       if (stackRemaining * sizeof(StackType_t) < 2000) {
         Serial.println("!! WARNING: Background_Tasks stack getting low !!");
       }
@@ -160,12 +171,14 @@ void BLE_Task(void *parameter) {
     static unsigned long lastStackCheck = 0;
     if (now - lastStackCheck > 30000) {
       UBaseType_t stackRemaining = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf(">> BLE_Task stack high-water mark: %d bytes free\n",
-                    stackRemaining * sizeof(StackType_t));
+      if (BAT_Is_Charging()) {
+        Serial.printf(">> BLE_Task stack high-water mark: %d bytes free\n",
+                      stackRemaining * sizeof(StackType_t));
+      }
       if (stackRemaining * sizeof(StackType_t) < 2000) {
         Serial.println("!! WARNING: BLE_Task stack getting low !!");
       }
-      lastStackCheck = now;    
+      lastStackCheck = now;
     }
 
     // CRITICAL: Yield to IDLE0 so the task watchdog gets fed.
@@ -185,60 +198,76 @@ void UI_Loop_Task(void *parameter) {
     static unsigned long lastStackCheck = 0;
     if (millis() - lastStackCheck > 30000) {
       UBaseType_t stackRemaining = uxTaskGetStackHighWaterMark(NULL);
-      Serial.printf(">> UI loop stack high-water mark: %d bytes free\n",
-                    stackRemaining * sizeof(StackType_t));
+      if (BAT_Is_Charging()) {
+        Serial.printf(">> UI loop stack high-water mark: %d bytes free\n",
+                      stackRemaining * sizeof(StackType_t));
+      }
       if (stackRemaining * sizeof(StackType_t) < 2000) {
         Serial.println("!! WARNING: UI loop stack getting low !!");
       }
       lastStackCheck = millis();
     }
 
-    monitor_heap();
+    bool awake = PWR_IsDisplayAwake();
 
-    ui_tick();
-    Lvgl_Loop();
-
-    static unsigned long lastWeatherUpdate = 0;
-    if (millis() - lastWeatherUpdate > 5000) {
-      lastWeatherUpdate = millis();
-      weather.applyToUI();
+    if (awake) {
+      // Rate-limit monitor_heap to 2 Hz — the internal 30 s gate handles the full
+      // stats dump; the fast-path still calls ESP.getFreeHeap() every tick which is
+      // unnecessary overhead at 200 Hz.
+      static unsigned long lastHeapMonitor = 0;
+      unsigned long _now = millis();
+      if (_now - lastHeapMonitor >= 500) {
+        lastHeapMonitor = _now;
+        monitor_heap();
+      }
+      ui_tick();
     }
 
-    // Check if calendar fetch completed and update display (must run on UI core)
-    calendarFetcher.checkDisplayUpdate();
+    Lvgl_Loop();  // must always run — processes touch input for wake detection
 
-    if (notificationStore.getTotalCount() >= 0) {
-      notificationStore.processCommands();
-    }
+    if (awake) {
+      static unsigned long lastWeatherUpdate = 0;
+      if (millis() - lastWeatherUpdate > 5000) {
+        lastWeatherUpdate = millis();
+        weather.applyToUI();
+      }
 
-    if (ble.mediaUIUpdateNeeded.exchange(false)) {
-      if (ble.isAMSConnected()) {
+      // Check if calendar fetch completed and update display (must run on UI core)
+      calendarFetcher.checkDisplayUpdate();
+
+      if (notificationStore.getTotalCount() >= 0) {
+        notificationStore.processCommands();
+      }
+
+      if (ble.mediaUIUpdateNeeded.exchange(false)) {
+        if (ble.isAMSConnected()) {
+          ble.updateMediaUIVariables();
+        }
+      }
+
+      // FIX: Process buffered AMS entity update notifications.
+      // The NimBLE AMS callback (Core 0) copies incoming entity-update packets
+      // into amsUpdateBuffer and sets amsDataReady. processAMSEntityUpdate()
+      // is documented "Called from Core 1" — it parses the buffer, writes to
+      // writeBufferPtr, swaps display buffers, and calls updateMediaUIVariables()
+      // (all of which require the LVGL/UI context of Core 1).
+      // Without this call the buffer is filled but never consumed: track changes
+      // are never reflected in the UI, amsNeedsTrackRefresh is never set, and
+      // album artwork is never requested after the initial connection.
+      ble.processAMSEntityUpdate();
+
+      static unsigned long lastMediaUIUpdate = 0;
+      if (millis() - lastMediaUIUpdate > 1000 && ble.isAMSConnected()) {
+        lastMediaUIUpdate = millis();
         ble.updateMediaUIVariables();
       }
+
+      mediaControls.apply_pending_artwork();
+
+      wifiClient.asyncScanUpdate();
     }
 
-    // FIX: Process buffered AMS entity update notifications.
-    // The NimBLE AMS callback (Core 0) copies incoming entity-update packets
-    // into amsUpdateBuffer and sets amsDataReady. processAMSEntityUpdate()
-    // is documented "Called from Core 1" — it parses the buffer, writes to
-    // writeBufferPtr, swaps display buffers, and calls updateMediaUIVariables()
-    // (all of which require the LVGL/UI context of Core 1).
-    // Without this call the buffer is filled but never consumed: track changes
-    // are never reflected in the UI, amsNeedsTrackRefresh is never set, and
-    // album artwork is never requested after the initial connection.
-    ble.processAMSEntityUpdate();
-
-    static unsigned long lastMediaUIUpdate = 0;
-    if (millis() - lastMediaUIUpdate > 1000 && ble.isAMSConnected()) {
-      lastMediaUIUpdate = millis();
-      ble.updateMediaUIVariables();
-    }
-
-    mediaControls.apply_pending_artwork();
-
-    wifiClient.asyncScanUpdate();
-
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(awake ? 5 : 100));
   }
 }
 
@@ -265,8 +294,17 @@ void setup() {
   Serial.begin(115200);
   Serial.setTxBufferSize(2048);
   delay(200);
-  unsigned long serialWait = millis();
-  while (!Serial && millis() - serialWait < 3000) { delay(10); }  // key for native USB CDC
+  // Only block waiting for a USB-CDC host when the device is on charge — on battery
+  // boot there is no host and the 3-second wait wastes power needlessly.
+  // BAT_Init() already ran inside Driver_Init(), so the ADC is ready for a direct read.
+  {
+    int _mv = analogReadMilliVolts(BAT_ADC_PIN);
+    bool bootCharging = ((float)(_mv * 3.0f / 1000.0f) / Measurement_offset) > 4.0f;
+    if (bootCharging) {
+      unsigned long serialWait = millis();
+      while (!Serial && millis() - serialWait < 3000) { delay(10); }  // key for native USB CDC
+    }
+  }
 
   int ret = mbedtls_platform_set_calloc_free(psram_calloc, psram_free);
   Serial.printf(">> mbedTLS → PSRAM: %s\n", ret == 0 ? "OK" : "FAILED");
@@ -371,6 +409,41 @@ void setup() {
     1,
     MALLOC_CAP_SPIRAM);
   Serial.printf(">> All tasks created with PSRAM stacks — internal heap preserved\n");
+
+  // -----------------------------------------------------------------------
+  // Automatic light sleep via FreeRTOS tickless idle.
+  //
+  // How it works:
+  //   When all tasks are blocked in vTaskDelay() simultaneously, the FreeRTOS
+  //   idle task on each core runs.  With tickless idle compiled in
+  //   (CONFIG_FREERTOS_USE_TICKLESS_IDLE=y) and the PM module armed here,
+  //   the idle task calls the ESP-IDF PM layer which halts both CPU cores
+  //   (light sleep) until the earliest pending wakeup timer fires.
+  //
+  // Expected gains (display off, no WiFi):
+  //   BLE_Task, UI_Loop_Task, and Driver_Loop all delay 100 ms when the
+  //   display is off, so the CPUs can sleep for up to ~80-90 ms per cycle.
+  //   The BLE controller negotiates its own wakeup window via the PM lock
+  //   it holds; actual sleep duration is capped by the next scheduled BLE
+  //   event.  Typical saving: 10-20 mA on the CPU/PSRAM rail.
+  //
+  // Constraints:
+  //   min_freq_mhz = max_freq_mhz = 80 — BLE and WiFi both require ≥80 MHz,
+  //   so Dynamic Frequency Scaling is disabled; only sleep/wake is used.
+  //
+  // USB / charging interaction:
+  //   The arduino-esp32 USB-CDC driver holds an esp_pm_lock while a USB host
+  //   has the port open.  Light sleep is therefore automatically suppressed
+  //   while plugged in to a PC — no separate check needed.
+  // -----------------------------------------------------------------------
+  esp_pm_config_t pm_config = {
+    .max_freq_mhz       = 80,
+    .min_freq_mhz       = 80,
+    .light_sleep_enable = true,
+  };
+  esp_err_t pm_err = esp_pm_configure(&pm_config);
+  Serial.printf(">> Automatic light sleep: %s\n",
+                pm_err == ESP_OK ? "enabled" : esp_err_to_name(pm_err));
 }
 
 

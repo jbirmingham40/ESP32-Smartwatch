@@ -42,24 +42,24 @@ extern volatile bool locationDataReady;
 // Callback function to reload location and weather after WiFi connection
 void onWifiConnected() {
   Serial.println("=== WiFi Connected - Reloading time, location, calendar and weather ===");
-  
+
   // FIRST: Sync time with NTP (fast, gets accurate time immediately)
   timeClient.begin();
   Serial.println("Time synced with NTP");
 
   
   // SECOND: Reload location using IP (slow HTTP call ~7 seconds)
-  if (ipLocation.loadUsingIp()) {
-    Serial.println("Location reloaded successfully");
+    if (ipLocation.loadUsingIp()) {
+      Serial.println("Location reloaded successfully");
     locationDataReady = true;  // Set flag after successful location load
 
     // THIRD: Update timezone based on new location
-    timeClient.lookupTimezone(ipLocation.getLatitude(), ipLocation.getLongitude());
-  } else {
-    Serial.println("Failed to reload location");
+      timeClient.lookupTimezone(ipLocation.getLatitude(), ipLocation.getLongitude());
+    } else {
+      Serial.println("Failed to reload location");
     locationDataReady = false;  // Clear flag on failure
   }
-  
+
   // FOURTH: Reload calendar data
   calendarFetcher.requestFetch();
 
@@ -613,6 +613,14 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
 
       wifiLastUsedMs = millis();
       esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+      // Wake on every 5th beacon instead of the default (3) — safe since WiFi is
+      // only used for periodic syncs, not real-time data (BLE handles that).
+      {
+        wifi_config_t _wconf = {};
+        esp_wifi_get_config(WIFI_IF_STA, &_wconf);
+        _wconf.sta.listen_interval = 5;
+        esp_wifi_set_config(WIFI_IF_STA, &_wconf);
+      }
 
       if (runPostConnectCallback && onConnectedCallback != nullptr) {
         Serial.println("Executing post-connection callback...");
@@ -718,6 +726,13 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
 
       // Reduce WiFi radio power between DTIM beacons (~50% current saving)
       esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+      // Wake on every 5th beacon instead of the default (3).
+      {
+        wifi_config_t _wconf = {};
+        esp_wifi_get_config(WIFI_IF_STA, &_wconf);
+        _wconf.sta.listen_interval = 5;
+        esp_wifi_set_config(WIFI_IF_STA, &_wconf);
+      }
 
       // Call post-connection callback if requested by caller
       if (runPostConnectCallback && onConnectedCallback != nullptr) {
@@ -802,6 +817,13 @@ bool WiFi_Client::joinNetwork(const char *ssid, const char *password, uint32_t t
   
   // Reduce WiFi radio power between DTIM beacons
   esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+  // Wake on every 5th beacon instead of the default (3).
+  {
+    wifi_config_t _wconf = {};
+    esp_wifi_get_config(WIFI_IF_STA, &_wconf);
+    _wconf.sta.listen_interval = 5;
+    esp_wifi_set_config(WIFI_IF_STA, &_wconf);
+  }
 
   // Call post-connection callback if set
   if (onConnectedCallback != nullptr) {

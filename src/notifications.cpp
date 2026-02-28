@@ -330,6 +330,10 @@ void NotificationStore::queueQuickNotification(const char* icon, const char* tit
     return;
   }
 
+  // Wake the display immediately so the notification is visible when it renders.
+  // Safe to call from Core 0 — only writes a volatile timestamp.
+  PWR_UpdateActivity();
+
   // Queue a command to trigger processing
   NotificationCommandData cmd;
   cmd.cmd = NotificationCommand::SHOW_QUICK_NOTIFICATION;
@@ -394,6 +398,10 @@ void NotificationStore::queueAddNotification(
     Serial.println(">> ERROR: Failed to queue add notification data (unexpected failure)");
     return;
   }
+
+  // Wake the display immediately so the notification is visible when it renders.
+  // Safe to call from Core 0 — only writes a volatile timestamp.
+  PWR_UpdateActivity();
 
   // Queue a command to trigger processing
   NotificationCommandData cmd;
@@ -911,6 +919,10 @@ void NotificationStore::queuePushCallScreen(const char* callerName, const char* 
     Serial.println(">> Incoming call queue full, skipping");
     return;
   }
+
+  // Wake the display immediately for incoming calls.
+  // Safe to call from Core 0 — only writes a volatile timestamp.
+  PWR_UpdateActivity();
 
   // Queue a command to trigger processing
   NotificationCommandData cmd;

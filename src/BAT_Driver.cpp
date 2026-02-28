@@ -4,9 +4,13 @@
 #define CHARGING_VOLTAGE 4.0f
 #define MAX_BAT_VOLTAGE 3.99f
 #define MIN_BAT_VOLTAGE 3.0f
-#define VOLTAGE_FILTER_ALPHA 0.25f
-#define DISCHARGE_COMP_SECONDS 20.0f
-#define MAX_DISCHARGE_RATE_V_PER_S 0.020f
+// Filter alpha 0.20 → ~25-second time constant (5s sample interval / 0.20).
+// Faster than 0.10 so load-sag voltage recovers quickly when the display sleeps,
+// preventing the "10% lost in 2 minutes" effect.  The wild swings (84→94→87→91)
+// were caused by DISCHARGE_COMP_SECONDS=20 amplifying noise 20×, not by alpha;
+// with that removed and 8-sample averaging in place, 0.20 is safe.
+#define VOLTAGE_FILTER_ALPHA 0.20f
+#define ADC_NUM_SAMPLES 8  // Average this many readings to suppress ADC noise
 
 typedef struct {
   float voltage;
@@ -69,52 +73,42 @@ void BAT_Init(void) {
 void BAT_Get_Volts(void) {
   static long lastRead = 0;
   static float filteredVoltage = 0.0f;
-  static float previousFilteredVoltage = 0.0f;
   static bool hasFilterState = false;
-  static unsigned long previousSampleMs = 0;
   long now = millis();
 
   if (lastRead + 5000 < now) {
     lastRead = now;
 
-    int voltsInt = analogReadMilliVolts(BAT_ADC_PIN);  // millivolts
-    float measuredVoltage = (float)(voltsInt * 3.0f / 1000.0f) / Measurement_offset;
+    // Average multiple ADC readings to reduce noise, especially after light-sleep
+    // wakeup where the first sample is often several tens of mV off.
+    long sumMv = 0;
+    for (int i = 0; i < ADC_NUM_SAMPLES; i++) {
+      sumMv += analogReadMilliVolts(BAT_ADC_PIN);
+    }
+    float measuredVoltage = (float)(sumMv / ADC_NUM_SAMPLES) * 3.0f / 1000.0f / Measurement_offset;
     voltage = measuredVoltage;
 
     isCharging = voltage > CHARGING_VOLTAGE;
 
     if (!hasFilterState) {
       filteredVoltage = measuredVoltage;
-      previousFilteredVoltage = measuredVoltage;
-      previousSampleMs = now;
       hasFilterState = true;
     } else {
       filteredVoltage = (VOLTAGE_FILTER_ALPHA * measuredVoltage) +
                         ((1.0f - VOLTAGE_FILTER_ALPHA) * filteredVoltage);
     }
 
-    float compensatedVoltage = filteredVoltage;
-    unsigned long dtMs = (previousSampleMs > 0) ? (now - previousSampleMs) : 0;
-    if (!isCharging && dtMs > 0) {
-      const float dtSec = (float)dtMs / 1000.0f;
-      float dischargeRate = (previousFilteredVoltage - filteredVoltage) / dtSec;  // V/s
-      if (dischargeRate < 0.0f) dischargeRate = 0.0f;
-      if (dischargeRate > MAX_DISCHARGE_RATE_V_PER_S) {
-        dischargeRate = MAX_DISCHARGE_RATE_V_PER_S;
-      }
+    // No discharge-rate compensation — the 20-second projection that was here
+    // amplified ADC noise by 20× and caused the percentage to swing wildly
+    // (e.g. 84 → 94 → 87 → 91) rather than decreasing smoothly.  The filtered
+    // voltage on its own is accurate enough; it may read 1–5% lower under heavy
+    // load (display on, WiFi active) due to battery internal-resistance sag, but
+    // the faster alpha (0.20) means it recovers quickly once the display sleeps.
+    float displayVoltage = filteredVoltage;
+    if (displayVoltage > MAX_BAT_VOLTAGE) displayVoltage = MAX_BAT_VOLTAGE;
+    if (displayVoltage < MIN_BAT_VOLTAGE) displayVoltage = MIN_BAT_VOLTAGE;
 
-      // Compensate load sag by projecting the open-circuit voltage slightly upward.
-      compensatedVoltage += dischargeRate * DISCHARGE_COMP_SECONDS;
-    }
-
-    if (compensatedVoltage > MAX_BAT_VOLTAGE) compensatedVoltage = MAX_BAT_VOLTAGE;
-    if (compensatedVoltage < MIN_BAT_VOLTAGE) compensatedVoltage = MIN_BAT_VOLTAGE;
-
-    chargePercentage = map_voltage_to_percent(compensatedVoltage);
-
-    previousFilteredVoltage = filteredVoltage;
-    previousSampleMs = now;
-
+    chargePercentage = map_voltage_to_percent(displayVoltage);
     sprintf(chargePercentageStr, "%d%%", (int)chargePercentage);
   }
 }
