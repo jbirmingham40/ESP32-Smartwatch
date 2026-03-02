@@ -14,6 +14,7 @@
 #include <mbedtls/platform.h>
 #include <psram_alloc.h>
 #include "media_controls.h"
+#include "BAT_Driver.h"
 
 // External instances
 extern BLE ble;
@@ -476,7 +477,7 @@ bool MediaControls::get_media_image(const char *title, const char *artist, bitma
     Serial.println(F("[iTunes] Failed to allocate client buffer in PSRAM"));
     return false;
   }
-  NetworkClientSecure *client = new (static_cast<void *>(clientBuf)) NetworkClientSecure();
+  NetworkClientSecure *client = new NetworkClientSecure();
   client->setInsecure();  // skip cert verification – saves a few more KB
   client->setTimeout(15);
 
@@ -670,6 +671,18 @@ void MediaControls::update_album_artwork(const char *title, const char *artist, 
       current_artwork.bitmap_data &&
       strcmp(current_artwork_title, safeTitle) == 0 &&
       strcmp(current_artwork_artist, safeArtist) == 0;
+
+  // Battery saver policy: skip network artwork fetches while on battery.
+  // This avoids frequent WiFi reconnect + HTTP/TLS work on track changes.
+  if (!BAT_Is_Charging() && !hasCachedArtworkForTrack) {
+    set_artwork_target_widget(artwork_widget);
+    if (artwork_target_widget) {
+      invalidate_img_dsc();
+      lv_img_set_src(artwork_target_widget, &img_music_100);
+      lv_obj_invalidate(artwork_target_widget);
+    }
+    return;
+  }
 
   if (hasCachedArtworkForTrack) {
     set_artwork_target_widget(artwork_widget);

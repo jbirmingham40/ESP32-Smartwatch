@@ -9,7 +9,7 @@
 #define Device_Restart_Time  15
 #define Device_Shutdown_Time 20
 
-#define SCREEN_TIMEOUT_MS    15000  // Blank display after 15 s of inactivity
+#define SCREEN_TIMEOUT_MS    8000   // Blank display after 8 s of inactivity
 
 void Fall_Asleep(void);
 void Shutdown(void);

@@ -158,6 +158,9 @@ void Set_Backlight(uint8_t Light)                        //
   if(Light > Backlight_MAX || Light < 0)
     printf("Set Backlight parameters in the range of 0 to 100 \r\n");
   else{
+    // Persist the configured brightness level so wake-from-sleep restores
+    // the user's selected setting instead of a stale/default value.
+    LCD_Backlight = Light;
     uint32_t Backlight = Light*10;
     if(Backlight == 1000)
       Backlight = 1024;

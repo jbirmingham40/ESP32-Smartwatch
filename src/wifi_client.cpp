@@ -42,22 +42,32 @@ extern volatile bool locationDataReady;
 // Callback function to reload location and weather after WiFi connection
 void onWifiConnected() {
   Serial.println("=== WiFi Connected - Reloading time, location, calendar and weather ===");
+  static unsigned long lastLocationRefreshMs = 0;
+  unsigned long now = millis();
 
   // FIRST: Sync time with NTP (fast, gets accurate time immediately)
   timeClient.begin();
   Serial.println("Time synced with NTP");
 
-  
-  // SECOND: Reload location using IP (slow HTTP call ~7 seconds)
+  // SECOND: Reload location/timezone infrequently. This is one of the more expensive
+  // network sequences and generally does not need to run every sync window.
+  bool doLocationRefresh = (lastLocationRefreshMs == 0) ||
+                           ((now - lastLocationRefreshMs) >= 6UL * 60UL * 60UL * 1000UL);
+  if (doLocationRefresh) {
     if (ipLocation.loadUsingIp()) {
       Serial.println("Location reloaded successfully");
-    locationDataReady = true;  // Set flag after successful location load
+      locationDataReady = true;  // Set flag after successful location load
 
-    // THIRD: Update timezone based on new location
+      // THIRD: Update timezone based on new location
       timeClient.lookupTimezone(ipLocation.getLatitude(), ipLocation.getLongitude());
+      lastLocationRefreshMs = now;
     } else {
       Serial.println("Failed to reload location");
-    locationDataReady = false;  // Clear flag on failure
+      locationDataReady = false;  // Clear flag on failure
+    }
+  } else {
+    Serial.println("Skipping location/timezone refresh (recently updated)");
+    locationDataReady = true;
   }
 
   // FOURTH: Reload calendar data
@@ -612,6 +622,7 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
       Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
 
       wifiLastUsedMs = millis();
+      WiFi.setAutoReconnect(false);  // processLifecycle() owns reconnect — no background surprise
       esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
       // Wake on every 5th beacon instead of the default (3) — safe since WiFi is
       // only used for periodic syncs, not real-time data (BLE handles that).
@@ -723,6 +734,7 @@ bool WiFi_Client::smartConnect(uint32_t timeoutMs, bool runPostConnectCallback) 
       setPassword(matches[i].password);
 
       wifiLastUsedMs = millis();
+      WiFi.setAutoReconnect(false);  // processLifecycle() owns reconnect — no background surprise
 
       // Reduce WiFi radio power between DTIM beacons (~50% current saving)
       esp_wifi_set_ps(WIFI_PS_MAX_MODEM);

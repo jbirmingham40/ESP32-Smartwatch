@@ -4,6 +4,7 @@
 static uint8_t BAT_State = 0;
 static uint8_t Device_State = 0;
 static uint16_t Long_Press = 0;
+static bool lastButtonPressed = false;
 
 // Display idle-blanking state
 static volatile unsigned long lastActivityTime = 0;  // updated from ISR and main loop
@@ -34,7 +35,9 @@ void Fall_Asleep(void) {
   displayAwake = false;
   displaySleepStartMs = millis();
   wakeRequestFromIsr = false;
-  Set_Backlight(0);
+  // Force panel brightness off without modifying LCD_Backlight.
+  // This preserves the user's configured brightness for wake restore.
+  ledcWrite(LCD_Backlight_PIN, 0);
   LCD_Sleep(true);
 }
 
@@ -44,14 +47,25 @@ void Restart(void) {
 
 void Shutdown(void) {
   digitalWrite(PWR_Control_PIN, LOW);
-  Set_Backlight(0);
+  // Force panel brightness off without modifying LCD_Backlight.
+  ledcWrite(LCD_Backlight_PIN, 0);
 }
 
 void PWR_Loop(void) {
   unsigned long now = millis();
   static unsigned long lastPowerLog = 0;
+  static unsigned long lastLoopTs = 0;
+  static unsigned long awakeAccumMs = 0;
+  static unsigned long asleepAccumMs = 0;
 
   wakeRequestFromIsr = false;
+
+  if (lastLoopTs != 0) {
+    unsigned long dt = now - lastLoopTs;
+    if (displayAwake) awakeAccumMs += dt;
+    else asleepAccumMs += dt;
+  }
+  lastLoopTs = now;
 
   // --- Display idle timeout ---
   if (displayAwake) {
@@ -70,9 +84,15 @@ void PWR_Loop(void) {
 
   // --- Button long-press handling ---
   if (BAT_State) {
-    if (!digitalRead(PWR_KEY_Input_PIN)) {
-      // Button is held — counts as activity, wake display if asleep
-      PWR_UpdateActivity();
+    bool buttonPressed = !digitalRead(PWR_KEY_Input_PIN);
+    if (buttonPressed) {
+      // Treat button as activity only on the press edge, and only once the
+      // boot-time key release guard has finished (BAT_State == 2).
+      // This prevents a noisy/stuck-low key pin from continuously resetting
+      // screen idle timeout and causing high battery drain.
+      if (BAT_State == 2 && !lastButtonPressed) {
+        PWR_UpdateActivity();
+      }
       if (BAT_State == 2) {
         Long_Press++;
         if (Long_Press >= Device_Sleep_Time) {
@@ -84,26 +104,34 @@ void PWR_Loop(void) {
             Shutdown();
         }
       }
+      lastButtonPressed = true;
     } else {
       if (BAT_State == 1)
         BAT_State = 2;
       Long_Press = 0;
+      lastButtonPressed = false;
     }
   }
 
   if (now - lastPowerLog >= 60000) {
     lastPowerLog = now;
-    if (BAT_Is_Charging()) {
-      Serial.printf("[Power] display=%s idle_ms=%lu backlight=%u\n",
-                    displayAwake ? "on" : "off",
-                    (unsigned long)(now - lastActivityTime),
-                    (unsigned)LCD_Backlight);
-    }
+    unsigned long total = awakeAccumMs + asleepAccumMs;
+    unsigned long awakePct = (total > 0) ? ((awakeAccumMs * 100UL) / total) : 0;
+    Serial.printf("[Power] display=%s idle_ms=%lu backlight=%u key=%d awake_pct=%lu%%\n",
+                  displayAwake ? "on" : "off",
+                  (unsigned long)(now - lastActivityTime),
+                  (unsigned)LCD_Backlight,
+                  !digitalRead(PWR_KEY_Input_PIN),
+                  awakePct);
+    awakeAccumMs = 0;
+    asleepAccumMs = 0;
   }
 }
 
 void PWR_Init(void) {
-  pinMode(PWR_KEY_Input_PIN, INPUT);
+  // Active-low key input. Internal pull-up prevents floating/false-low reads
+  // that can continuously reset activity and block display sleep.
+  pinMode(PWR_KEY_Input_PIN, INPUT_PULLUP);
   pinMode(PWR_Control_PIN, OUTPUT);
   // Always latch power so the device stays on when USB is removed.
   // Shutdown() drives this LOW explicitly when a power-off is intended.

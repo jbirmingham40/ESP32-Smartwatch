@@ -104,6 +104,17 @@ void Touch_Read_Data(void) {
     // Fallback while asleep: some panel/touch combinations can miss/suppress
     // the first IRQ edge after display sleep. Poll once to detect wake touch.
     if (!PWR_IsDisplayAwake()) {
+      // Keep fallback polling short and sparse: only during the first 3 s after
+      // display sleep, and at 1 Hz. This avoids 10 Hz I2C polling while asleep,
+      // which wastes power and can produce false wake touches on noisy panels.
+      static unsigned long lastSleepFallbackPoll = 0;
+      unsigned long now = millis();
+      if (PWR_GetDisplaySleepMs() > 3000 || (now - lastSleepFallbackPoll) < 1000) {
+        touch_data.touch_num = 0;
+        return;
+      }
+      lastSleepFallbackPoll = now;
+
       if (tp_read_data(&touch) == ESP_OK) {
         touch_cnt = (touch.touch_num > CONFIG_ESP_LCD_TOUCH_MAX_POINTS ? CONFIG_ESP_LCD_TOUCH_MAX_POINTS : touch.touch_num);
         touch_data.touch_num = touch_cnt;

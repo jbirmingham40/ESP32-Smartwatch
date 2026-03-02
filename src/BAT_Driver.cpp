@@ -1,16 +1,32 @@
 #include "BAT_Driver.h"
 #include <math.h>
 
-#define CHARGING_VOLTAGE 4.0f
-#define MAX_BAT_VOLTAGE 3.99f
+// Charging detection with hysteresis prevents icon/state flapping near 4.0 V.
+// Tuned for this board's ADC path which often reports near ~4.0V at full.
+#define CHARGING_VOLTAGE_ON 4.00f
+#define CHARGING_VOLTAGE_OFF 3.95f
+
+// Board-specific voltage span used for mapping to UI percent.
+#define MAX_BAT_VOLTAGE 4.05f
 #define MIN_BAT_VOLTAGE 3.0f
-// Filter alpha 0.20 → ~25-second time constant (5s sample interval / 0.20).
-// Faster than 0.10 so load-sag voltage recovers quickly when the display sleeps,
-// preventing the "10% lost in 2 minutes" effect.  The wild swings (84→94→87→91)
-// were caused by DISCHARGE_COMP_SECONDS=20 amplifying noise 20×, not by alpha;
-// with that removed and 8-sample averaging in place, 0.20 is safe.
-#define VOLTAGE_FILTER_ALPHA 0.20f
-#define ADC_NUM_SAMPLES 8  // Average this many readings to suppress ADC noise
+
+// Post-unplug settle window: voltage rebounds after charger removal and under
+// burst load (screen on/WiFi). Use slower filtering during this period.
+#define UNPLUG_SETTLE_MS 180000UL  // 3 minutes
+
+// Voltage filter tuning (sample period is 5s)
+#define VOLTAGE_FILTER_ALPHA_CHARGING   0.25f
+#define VOLTAGE_FILTER_ALPHA_DISCHARGE  0.12f
+#define VOLTAGE_FILTER_ALPHA_UNPLUG     0.05f
+
+// Percent filter tuning (separate from voltage filter for stable UI)
+#define PERCENT_FILTER_ALPHA_CHARGING   0.20f
+#define PERCENT_FILTER_ALPHA_DISCHARGE  0.15f
+#define PERCENT_FILTER_ALPHA_UNPLUG     0.06f
+
+// ADC sampling: trimmed mean removes outliers from wake/noise spikes.
+#define ADC_NUM_SAMPLES 16
+#define ADC_TRIM_COUNT 2
 
 typedef struct {
   float voltage;
@@ -18,17 +34,21 @@ typedef struct {
 } battery_curve_point_t;
 
 static const battery_curve_point_t kBatteryCurve[] = {
-    {4.00f, 100},
+    {4.05f, 100},
+    {4.00f, 98},
     {3.95f, 95},
     {3.90f, 90},
-    {3.85f, 80},
+    {3.85f, 82},
     {3.80f, 70},
-    {3.75f, 60},
-    {3.70f, 50},
-    {3.65f, 40},
-    {3.60f, 30},
+    {3.75f, 62},
+    {3.70f, 54},
+    {3.65f, 45},
+    {3.60f, 35},
+    {3.55f, 27},
     {3.50f, 20},
+    {3.45f, 14},
     {3.40f, 10},
+    {3.35f, 7},
     {3.30f, 5},
     {3.20f, 2},
     {3.10f, 1},
@@ -73,42 +93,106 @@ void BAT_Init(void) {
 void BAT_Get_Volts(void) {
   static long lastRead = 0;
   static float filteredVoltage = 0.0f;
+  static float filteredPercent = 0.0f;
   static bool hasFilterState = false;
+  static bool hasPercentState = false;
+  static unsigned long unplugTimestampMs = 0;
+  static bool wasCharging = false;
   long now = millis();
 
   if (lastRead + 5000 < now) {
     lastRead = now;
 
-    // Average multiple ADC readings to reduce noise, especially after light-sleep
-    // wakeup where the first sample is often several tens of mV off.
-    long sumMv = 0;
+    // Trimmed mean to reject outliers from ADC jitter and wake transitions.
+    int samples[ADC_NUM_SAMPLES];
     for (int i = 0; i < ADC_NUM_SAMPLES; i++) {
-      sumMv += analogReadMilliVolts(BAT_ADC_PIN);
+      samples[i] = analogReadMilliVolts(BAT_ADC_PIN);
     }
-    float measuredVoltage = (float)(sumMv / ADC_NUM_SAMPLES) * 3.0f / 1000.0f / Measurement_offset;
+
+    // Insertion sort (small fixed N, no heap use)
+    for (int i = 1; i < ADC_NUM_SAMPLES; i++) {
+      int key = samples[i];
+      int j = i - 1;
+      while (j >= 0 && samples[j] > key) {
+        samples[j + 1] = samples[j];
+        j--;
+      }
+      samples[j + 1] = key;
+    }
+
+    long sumMv = 0;
+    int used = 0;
+    for (int i = ADC_TRIM_COUNT; i < ADC_NUM_SAMPLES - ADC_TRIM_COUNT; i++) {
+      sumMv += samples[i];
+      used++;
+    }
+    if (used <= 0) return;
+
+    float measuredVoltage = (float)(sumMv / used) * 3.0f / 1000.0f / Measurement_offset;
     voltage = measuredVoltage;
 
-    isCharging = voltage > CHARGING_VOLTAGE;
+    // Charging-state hysteresis removes threshold chatter near 4.0 V.
+    if (isCharging) {
+      if (measuredVoltage < CHARGING_VOLTAGE_OFF) isCharging = false;
+    } else {
+      if (measuredVoltage > CHARGING_VOLTAGE_ON) isCharging = true;
+    }
+
+    if (wasCharging && !isCharging) {
+      unplugTimestampMs = now;
+    }
+    wasCharging = isCharging;
+
+    bool inUnplugSettle = (!isCharging &&
+                           unplugTimestampMs > 0 &&
+                           (unsigned long)(now - unplugTimestampMs) < UNPLUG_SETTLE_MS);
 
     if (!hasFilterState) {
       filteredVoltage = measuredVoltage;
       hasFilterState = true;
     } else {
-      filteredVoltage = (VOLTAGE_FILTER_ALPHA * measuredVoltage) +
-                        ((1.0f - VOLTAGE_FILTER_ALPHA) * filteredVoltage);
+      float alpha = VOLTAGE_FILTER_ALPHA_DISCHARGE;
+      if (isCharging) alpha = VOLTAGE_FILTER_ALPHA_CHARGING;
+      else if (inUnplugSettle) alpha = VOLTAGE_FILTER_ALPHA_UNPLUG;
+
+      filteredVoltage = (alpha * measuredVoltage) +
+                        ((1.0f - alpha) * filteredVoltage);
     }
 
-    // No discharge-rate compensation — the 20-second projection that was here
-    // amplified ADC noise by 20× and caused the percentage to swing wildly
-    // (e.g. 84 → 94 → 87 → 91) rather than decreasing smoothly.  The filtered
-    // voltage on its own is accurate enough; it may read 1–5% lower under heavy
-    // load (display on, WiFi active) due to battery internal-resistance sag, but
-    // the faster alpha (0.20) means it recovers quickly once the display sleeps.
+    // Map filtered voltage to percentage.
     float displayVoltage = filteredVoltage;
     if (displayVoltage > MAX_BAT_VOLTAGE) displayVoltage = MAX_BAT_VOLTAGE;
     if (displayVoltage < MIN_BAT_VOLTAGE) displayVoltage = MIN_BAT_VOLTAGE;
 
-    chargePercentage = map_voltage_to_percent(displayVoltage);
+    int rawPercent = map_voltage_to_percent(displayVoltage);
+
+    // Additional smoothing directly in percent-space for a stable UI readout.
+    if (!hasPercentState) {
+      filteredPercent = (float)rawPercent;
+      hasPercentState = true;
+    } else {
+      float pctAlpha = PERCENT_FILTER_ALPHA_DISCHARGE;
+      if (isCharging) pctAlpha = PERCENT_FILTER_ALPHA_CHARGING;
+      else if (inUnplugSettle) pctAlpha = PERCENT_FILTER_ALPHA_UNPLUG;
+
+      filteredPercent = (pctAlpha * (float)rawPercent) +
+                        ((1.0f - pctAlpha) * filteredPercent);
+
+      // While charging, avoid fast downward jumps from transient load/ADC noise.
+      // At 5 s sampling this caps drop to ~0.6%/minute.
+      if (isCharging && filteredPercent < (float)chargePercentage - 0.05f) {
+        filteredPercent = (float)chargePercentage - 0.05f;
+      }
+
+      // On battery, cap rebound speed so brief load relief doesn't jump 4-8% instantly.
+      if (!isCharging && filteredPercent > (float)chargePercentage + 1.0f) {
+        filteredPercent = (float)chargePercentage + 1.0f;
+      }
+    }
+
+    chargePercentage = (int)lroundf(filteredPercent);
+    if (chargePercentage < 0) chargePercentage = 0;
+    if (chargePercentage > 100) chargePercentage = 100;
     sprintf(chargePercentageStr, "%d%%", (int)chargePercentage);
   }
 }
