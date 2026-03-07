@@ -75,6 +75,8 @@ uint8_t SPD2010_Touch_Reset(void);
 uint16_t SPD2010_Read_cfg(void); 
 void Touch_Read_Data(void);
 bool Touch_Get_xy(uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_num, uint8_t max_point_num);
+bool Touch_HasPendingInterrupt(void);
+void Touch_ClearPendingInterrupt(void);
 void example_touchpad_read(void);
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

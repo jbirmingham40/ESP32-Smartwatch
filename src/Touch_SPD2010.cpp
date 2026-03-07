@@ -4,6 +4,25 @@
 struct SPD2010_Touch touch_data = {0};
 volatile bool Touch_interrupts = false;
 
+// Consuming check: returns true if the touch ISR has fired, and clears the
+// flag so a single interrupt only triggers one wake attempt.
+bool Touch_HasPendingInterrupt(void) {
+  noInterrupts();
+  bool pending = Touch_interrupts;
+  Touch_interrupts = false;
+  interrupts();
+  return pending;
+}
+
+// Discard any pending touch interrupt without acting on it.
+// Called when the display sleeps to clear stale/phantom interrupts that the
+// SPD2010 touch controller fires shortly after LCD_Sleep(true).
+void Touch_ClearPendingInterrupt(void) {
+  noInterrupts();
+  Touch_interrupts = false;
+  interrupts();
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool I2C_Read_Touch(uint8_t Driver_addr, uint16_t Reg_addr, uint8_t *Reg_data, uint32_t Length)
@@ -101,34 +120,15 @@ void Touch_Read_Data(void) {
   Touch_interrupts = false;
   interrupts();
   if (!shouldRead) {
-    // Fallback while asleep: some panel/touch combinations can miss/suppress
-    // the first IRQ edge after display sleep. Poll once to detect wake touch.
-    if (!PWR_IsDisplayAwake()) {
-      // Keep fallback polling short and sparse: only during the first 3 s after
-      // display sleep, and at 1 Hz. This avoids 10 Hz I2C polling while asleep,
-      // which wastes power and can produce false wake touches on noisy panels.
-      static unsigned long lastSleepFallbackPoll = 0;
-      unsigned long now = millis();
-      if (PWR_GetDisplaySleepMs() > 3000 || (now - lastSleepFallbackPoll) < 1000) {
-        touch_data.touch_num = 0;
-        return;
-      }
-      lastSleepFallbackPoll = now;
-
-      if (tp_read_data(&touch) == ESP_OK) {
-        touch_cnt = (touch.touch_num > CONFIG_ESP_LCD_TOUCH_MAX_POINTS ? CONFIG_ESP_LCD_TOUCH_MAX_POINTS : touch.touch_num);
-        touch_data.touch_num = touch_cnt;
-        for (int i = 0; i < touch_cnt; i++) {
-          touch_data.rpt[i].x = touch.rpt[i].x;
-          touch_data.rpt[i].y = touch.rpt[i].y;
-          touch_data.rpt[i].weight = touch.rpt[i].weight;
-        }
-      } else {
-        touch_data.touch_num = 0;
-      }
-    } else {
-      touch_data.touch_num = 0;
-    }
+    // No interrupt fired — nothing to read.
+    // The SPD2010 touch controller was found to return phantom/stale touch
+    // data immediately after LCD_Sleep(true), causing a false wake loop:
+    //   display sleeps → fallback poll reads phantom touch → PWR_UpdateActivity()
+    //   → display wakes → 8 s later sleeps again → repeat.
+    // At ~73% display uptime this caused ~58 mA average (~3 h battery life).
+    // Real touches reliably fire the FALLING-edge interrupt (Touch_SPD2010_ISR),
+    // so the interrupt-driven path alone is sufficient for wake-from-sleep.
+    touch_data.touch_num = 0;
     return;
   }
 

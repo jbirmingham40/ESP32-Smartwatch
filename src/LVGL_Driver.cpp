@@ -8,6 +8,7 @@
 #include "LVGL_Driver.h"
 #include "PWR_Key.h"
 
+static esp_timer_handle_t s_lvgl_tick_timer = NULL;
 static lv_disp_draw_buf_t draw_buf;
 // static lv_color_t buf1[ LVGL_BUF_LEN ];
 // static lv_color_t buf2[ LVGL_BUF_LEN ];
@@ -93,9 +94,8 @@ void Lvgl_Init(void) {
     .callback = &example_increase_lvgl_tick,
     .name = "lvgl_tick"
   };
-  esp_timer_handle_t lvgl_tick_timer = NULL;
-  esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer);
-  esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000);
+  esp_timer_create(&lvgl_tick_timer_args, &s_lvgl_tick_timer);
+  esp_timer_start_periodic(s_lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000);
 
   // Get the input device
   lv_indev_t *indev = lv_indev_get_next(NULL);
@@ -112,4 +112,15 @@ void Lvgl_Init(void) {
 void Lvgl_Loop(void) {
   long time_in_us = lv_timer_handler(); /* let the GUI do its work */
   // delay( 5 );
+}
+
+// Stop the LVGL tick timer when the display is off.  This eliminates a
+// 20 ms periodic wakeup that prevents the CPU from staying in light sleep.
+void Lvgl_PauseTick(void) {
+  if (s_lvgl_tick_timer) esp_timer_stop(s_lvgl_tick_timer);
+}
+
+// Restart the LVGL tick timer when the display wakes.
+void Lvgl_ResumeTick(void) {
+  if (s_lvgl_tick_timer) esp_timer_start_periodic(s_lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000);
 }

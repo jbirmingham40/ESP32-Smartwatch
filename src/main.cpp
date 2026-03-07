@@ -1,4 +1,5 @@
 #include "Display_SPD2010.h"
+#include "Touch_SPD2010.h"
 #include "Audio_PCM5101.h"
 #include "RTC_PCF85063.h"
 #include "LVGL_Driver.h"
@@ -27,6 +28,8 @@
 #include "calendar_fetcher.h"
 #include "esp_core_dump.h"
 #include "esp_pm.h"
+#include "esp_sleep.h"
+#include "soc/rtc.h"
 
 extern CalendarFetcher calendarFetcher;
 
@@ -50,19 +53,28 @@ MediaControls mediaControls;
 volatile bool locationDataReady = false;
 
 void Driver_Loop(void *parameter) {
-  unsigned long lastSensorRead = 0;
+  unsigned long lastImuRead = 0;
+  unsigned long lastSlowRead = 0;
 
   while (1) {
     // PWR_Loop always runs at 100ms — it drives the display wake/sleep state machine.
     PWR_Loop();
 
-    // Sensor and time reads only need ~2Hz when display is off.
-    // When display is on, run at full 10Hz (every 100ms).
-    unsigned long sensorInterval = PWR_IsDisplayAwake() ? 100UL : 500UL;
+    bool awake = PWR_IsDisplayAwake();
     unsigned long now = millis();
-    if (now - lastSensorRead >= sensorInterval) {
-      lastSensorRead = now;
+
+    // Keep IMU cadence high enough for step detection even while display is off.
+    // 100 ms awake, 125 ms asleep keeps good step sensitivity with lower CPU duty.
+    unsigned long imuInterval = awake ? 100UL : 125UL;
+    if (now - lastImuRead >= imuInterval) {
+      lastImuRead = now;
       QMI8658_Loop();
+    }
+
+    // RTC/battery/time refresh does not need 10 Hz; reduce background wakeups.
+    unsigned long slowInterval = awake ? 500UL : 2000UL;
+    if (now - lastSlowRead >= slowInterval) {
+      lastSlowRead = now;
       PCF85063_Loop();
       BAT_Get_Volts();
       timeClient.refresh();
@@ -83,7 +95,14 @@ void Driver_Loop(void *parameter) {
       lastStackCheck = millis();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // 100 ms when awake for responsive UI; slower cadence when asleep reduces
+    // background wakeups and gives the automatic PM/tickless-idle path longer
+    // uninterrupted windows to enter light sleep safely.
+    if (awake) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
   }
 }
 
@@ -99,19 +118,31 @@ void Driver_Init() {
   QMI8658_Init();
 }
 
-// Periodic data sync interval — how often to reconnect and refresh NTP/geo/weather/calendar.
-// 30 minutes is sufficient: NTP drift is negligible, weather changes slowly, and each
-// WiFi-on window costs ~0.67mAh; halving frequency saves ~20mAh over a full day.
-static const unsigned long WIFI_SYNC_INTERVAL_MS = 30UL * 60UL * 1000UL;  // 30 minutes
+// Periodic data sync interval — how often to reconnect and refresh network data.
+// 120 minutes cuts radio duty cycle roughly in half versus hourly full sync.
+static const unsigned long WIFI_SYNC_INTERVAL_MS = 120UL * 60UL * 1000UL;  // 120 minutes
 
 void Background_Tasks(void *parameters) {
   // Trigger first cycle immediately to cover the WiFi already on from setup().
   unsigned long lastSyncTime = millis() - WIFI_SYNC_INTERVAL_MS;
+  unsigned long lastRadioLog = 0;
+  unsigned long lastDrainDiag = 0;
+  unsigned long lastStateTs = millis();
+  unsigned long wifiConnectedMs = 0;
+  unsigned long wifiDisconnectedMs = 0;
 
   while (1) {
     unsigned long now = millis();
+    bool wifiConnected = WiFi.isConnected();
 
-    // Periodic sync: request a connection every 15 minutes so onWifiConnected()
+    if (lastStateTs != 0) {
+      unsigned long dt = now - lastStateTs;
+      if (wifiConnected) wifiConnectedMs += dt;
+      else wifiDisconnectedMs += dt;
+    }
+    lastStateTs = now;
+
+    // Periodic sync: request a connection every 60 minutes so onWifiConnected()
     // refreshes NTP, location, weather, and calendar.  WiFi disconnects automatically
     // 30 seconds after keepAlive() is last called.
     if (now - lastSyncTime >= WIFI_SYNC_INTERVAL_MS) {
@@ -135,6 +166,35 @@ void Background_Tasks(void *parameters) {
     // Single lifecycle call: connects when keepAlive() has been called and WiFi is
     // down; disconnects automatically after 30 seconds of idle.
     wifiClient.processLifecycle();
+
+    if (BAT_Is_Charging() && now - lastRadioLog >= 60000UL) {
+      lastRadioLog = now;
+      Serial.printf("[Radio] wifi_mode=%d wifi_connected=%d ble_ams=%d display_awake=%d\n",
+                    (int)WiFi.getMode(),
+                    WiFi.isConnected() ? 1 : 0,
+                    ble.isAMSConnected() ? 1 : 0,
+                    PWR_IsDisplayAwake() ? 1 : 0);
+    }
+
+    if (now - lastDrainDiag >= 300000UL) {  // every 5 minutes
+      lastDrainDiag = now;
+      unsigned long total = wifiConnectedMs + wifiDisconnectedMs;
+      unsigned long wifiPct = total > 0 ? (wifiConnectedMs * 100UL) / total : 0;
+      Serial.printf("[DrainDiag] batt=%s wifi_conn_pct=%lu%% wifi_mode=%d ble_ams=%d display_awake=%d\n",
+                    BAT_Get_Charge_Percentage(),
+                    wifiPct,
+                    (int)WiFi.getMode(),
+                    ble.isAMSConnected() ? 1 : 0,
+                    PWR_IsDisplayAwake() ? 1 : 0);
+      Serial.println("[PMDump] Active PM locks:");
+      Serial.flush();
+      fflush(stdout);
+      esp_pm_dump_locks(stdout);
+      fflush(stdout);
+      Serial.println("[PMDump] ---end---");
+      wifiConnectedMs = 0;
+      wifiDisconnectedMs = 0;
+    }
 
     // Monitor stack
     static unsigned long lastStackCheck = 0;
@@ -185,10 +245,18 @@ void BLE_Task(void *parameter) {
     // Without this, BLE_Task (priority 4) spins continuously and starves
     // IDLE0 (priority 0), causing a watchdog reboot every ~5 seconds when
     // ble.run() returns quickly (e.g. phone not connected).
-    // 10 ms (100 Hz) when display is on for responsive notifications/media.
-    // 100 ms (10 Hz) when display is off — NimBLE callbacks still fire on
-    // their own; this only controls how often we poll ble.run() for work.
-    vTaskDelay(pdMS_TO_TICKS(PWR_IsDisplayAwake() ? 10 : 100));
+    // 20 ms when display is on for responsive notifications/media.
+    // 500-1000 ms when display is off to reduce CPU wakeups; NimBLE callbacks
+    // still fire on their own and this only controls ble.run() polling cadence.
+    bool awake = PWR_IsDisplayAwake();
+    bool amsConnected = ble.isAMSConnected();
+    if (awake) {
+      vTaskDelay(pdMS_TO_TICKS(20));
+    } else if (amsConnected) {
+      vTaskDelay(pdMS_TO_TICKS(500));
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
   }
 }
 
@@ -223,7 +291,21 @@ void UI_Loop_Task(void *parameter) {
       ui_tick();
     }
 
-    Lvgl_Loop();  // must always run — processes touch input for wake detection
+    if (awake) {
+      Lvgl_Loop();  // LVGL rendering + input processing
+    } else {
+      // Display is off and LVGL tick timer is paused.  The SPD2010 touch
+      // controller fires phantom/stale interrupts shortly after LCD_Sleep,
+      // so discard any that arrive during the first 3 seconds.  After that
+      // guard window, a touch interrupt is real and should wake the display.
+      // Touch_HasPendingInterrupt() consumes the flag so a single phantom
+      // interrupt only causes one (discarded) check, not a perpetual wake loop.
+      if (Touch_HasPendingInterrupt()) {
+        if (PWR_GetDisplaySleepMs() > 3000) {
+          PWR_UpdateActivity();
+        }
+      }
+    }
 
     if (awake) {
       static unsigned long lastWeatherUpdate = 0;
@@ -267,7 +349,7 @@ void UI_Loop_Task(void *parameter) {
       wifiClient.asyncScanUpdate();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(awake ? 5 : 100));
+    vTaskDelay(pdMS_TO_TICKS(awake ? 10 : 300));
   }
 }
 
@@ -286,6 +368,9 @@ static void psram_free(void *ptr) {
 
 
 void setup() {
+  // Calibrate the internal fast RC oscillator for better sleep timing
+  rtc_clk_fast_freq_set(RTC_FAST_FREQ_8M);
+
   // Latch power FIRST before any serial delays that would stall battery boot.
   // Driver_Init uses printf() (UART0) internally so it's safe before Serial.begin().
   Driver_Init();
@@ -311,6 +396,11 @@ void setup() {
   SD_Init();
   Audio_Init();
   LCD_Init();
+  // Touch init can leave I2C in an invalid state on some boots; re-init bus and IMU
+  // after LCD/Touch bring-up so step sensor reads remain valid.
+  I2C_Init();
+  QMI8658_Init();
+  Serial.println(">> Reinitialized I2C + IMU after LCD/Touch init");
   Lvgl_Init();
   ui_init();
 
@@ -335,7 +425,11 @@ void setup() {
     Serial.println("Failed to initialize notification store!");
   }
 
+#ifndef DISABLE_BLE_FOR_PM_TEST
   ble.begin();
+#else
+  Serial.println(">> BLE DISABLED for light-sleep power test");
+#endif
 
   if (WiFi.isConnected()) {
     locationDataReady = true;
@@ -364,6 +458,7 @@ void setup() {
   // discoverAttributes() during BLE connection setup is the most stack-intensive path —
   // it allocates large temporary structures on the stack and can overflow 12KB when the
   // BLE host task's own call frames are already deep. 20KB matches the documented intent.
+#ifndef DISABLE_BLE_FOR_PM_TEST
   xTaskCreatePinnedToCoreWithCaps(
     BLE_Task,
     "BLE Task",
@@ -374,6 +469,7 @@ void setup() {
     0,                // Core 0 — same as NimBLE host task
     MALLOC_CAP_SPIRAM);
   Serial.println(">> BLE task created (Core 0, priority 4, 16KB PSRAM stack)");
+#endif
 
   // Background_Tasks now also runs calendar fetch directly (no CalFetch one-shot task).
   // 32KB stack gives plenty of room for TLS handshake call frames for both weather
@@ -411,43 +507,52 @@ void setup() {
   Serial.printf(">> All tasks created with PSRAM stacks — internal heap preserved\n");
 
   // -----------------------------------------------------------------------
-  // Automatic light sleep via FreeRTOS tickless idle.
+  // Automatic light sleep via FreeRTOS tickless idle + BLE modem sleep.
   //
-  // How it works:
-  //   When all tasks are blocked in vTaskDelay() simultaneously, the FreeRTOS
-  //   idle task on each core runs.  With tickless idle compiled in
-  //   (CONFIG_FREERTOS_USE_TICKLESS_IDLE=y) and the PM module armed here,
-  //   the idle task calls the ESP-IDF PM layer which halts both CPU cores
-  //   (light sleep) until the earliest pending wakeup timer fires.
+  // ESP-IDF libs were rebuilt (HybridCompile) with:
+  //   CONFIG_PM_ENABLE=y, CONFIG_FREERTOS_USE_TICKLESS_IDLE=y,
+  //   CONFIG_BT_CTRL_MODEM_SLEEP=y, CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
   //
-  // Expected gains (display off, no WiFi):
-  //   BLE_Task, UI_Loop_Task, and Driver_Loop all delay 100 ms when the
-  //   display is off, so the CPUs can sleep for up to ~80-90 ms per cycle.
-  //   The BLE controller negotiates its own wakeup window via the PM lock
-  //   it holds; actual sleep duration is capped by the next scheduled BLE
-  //   event.  Typical saving: 10-20 mA on the CPU/PSRAM rail.
+  // BLE modem sleep uses the main 40MHz crystal as LP clock (no external
+  // 32.768 kHz crystal needed). The BLE controller sleeps between events
+  // and should NOT hold the btLS NO_LIGHT_SLEEP PM lock.
   //
-  // Constraints:
-  //   min_freq_mhz = max_freq_mhz = 80 — BLE and WiFi both require ≥80 MHz,
-  //   so Dynamic Frequency Scaling is disabled; only sleep/wake is used.
-  //
-  // USB / charging interaction:
-  //   The arduino-esp32 USB-CDC driver holds an esp_pm_lock while a USB host
-  //   has the port open.  Light sleep is therefore automatically suppressed
-  //   while plugged in to a PC — no separate check needed.
+  // DFS range: 40-80 MHz. Light sleep engages when all tasks are idle.
   // -----------------------------------------------------------------------
+  // Light sleep kills the native USB-CDC peripheral (no independent clock),
+  // so disable it when USB is connected to keep /dev/ttyACM0 alive.
+  bool allow_light_sleep = !BAT_Is_Charging();
   esp_pm_config_t pm_config = {
     .max_freq_mhz       = 80,
-    .min_freq_mhz       = 80,
-    .light_sleep_enable = true,
+    .min_freq_mhz       = 40,
+    .light_sleep_enable = allow_light_sleep,
   };
   esp_err_t pm_err = esp_pm_configure(&pm_config);
-  Serial.printf(">> Automatic light sleep: %s\n",
-                pm_err == ESP_OK ? "enabled" : esp_err_to_name(pm_err));
+  if (pm_err == ESP_ERR_NOT_SUPPORTED) {
+    pm_config.light_sleep_enable = false;
+    pm_err = esp_pm_configure(&pm_config);
+    if (pm_err == ESP_OK) {
+      Serial.println(">> Power management: DFS enabled (40-80MHz), light sleep not supported");
+    }
+  }
+  if (pm_err != ESP_OK) {
+    Serial.printf(">> Power management setup failed: %s\n", esp_err_to_name(pm_err));
+  } else if (pm_config.light_sleep_enable) {
+    Serial.println(">> Power management: DFS + automatic light sleep enabled");
+  } else if (allow_light_sleep == false) {
+    Serial.println(">> Power management: DFS enabled, light sleep disabled (USB connected)");
+  }
+
+  // Dump PM locks at boot to check if btLS is still held
+  Serial.println("[PMDump] Boot PM locks:");
+  Serial.flush();
+  fflush(stdout);
+  esp_pm_dump_locks(stdout);
+  fflush(stdout);
+  Serial.println("[PMDump] ---end---");
 }
 
 
-// All work moved to UI_Loop_Task. Default loop() idles.
-void loop() {  
+void loop() {
   vTaskDelay(pdMS_TO_TICKS(1000));
 }

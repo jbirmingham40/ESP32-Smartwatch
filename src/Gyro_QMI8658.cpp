@@ -2,6 +2,7 @@
 #include "src/vars.h"
 #include "settings.h"
 #include "PWR_Key.h"
+#include "BAT_Driver.h"
 
 extern Settings settings;
 
@@ -9,7 +10,7 @@ IMUdata Accel;
 IMUdata Gyro;
 
 uint8_t Device_addr ; // default for SD0/SA0 low, 0x6A if high
-acc_scale_t acc_scale = ACC_RANGE_4G;
+acc_scale_t acc_scale = ACC_RANGE_2G;
 gyro_scale_t gyro_scale = GYR_RANGE_64DPS;
 acc_odr_t acc_odr = acc_odr_norm_30;    // 30 Hz — sufficient for step detection (200ms debounce)
 gyro_odr_t gyro_odr = gyro_odr_norm_30;
@@ -19,31 +20,97 @@ lpf_t acc_lpf;
 float accelScales, gyroScales;
 uint8_t readings[12];
 uint32_t reading_timestamp_us; // timestamp in arduino micros() time
+static bool s_imuReady = false;
 
 // Define variables
 int stepCount = 0;           // Variable to store step count
 float distanceTraveled = 0;  // Distance in meters
 float caloriesBurned = 0;    // Calories
+static float s_dbgMag = 0.0f;
+static float s_dbgEnv = 0.0f;
+static float s_dbgJerk = 0.0f;
+static bool s_haveValidAccelSample = false;
+static uint8_t s_zeroVectorStreak = 0;
+static unsigned long s_lastImuRecoverMs = 0;
+
+static void logImuConfigRegisters(const char *tag) {
+  if (!s_imuReady) return;
+  uint8_t ctrl1 = QMI8658_receive(QMI8658_CTRL1);
+  uint8_t ctrl2 = QMI8658_receive(QMI8658_CTRL2);
+  uint8_t ctrl3 = QMI8658_receive(QMI8658_CTRL3);
+  uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
+  uint8_t ctrl6 = QMI8658_receive(QMI8658_CTRL6);
+  uint8_t ctrl7 = QMI8658_receive(QMI8658_CTRL7);
+  printf("QMI8658 %s CTRL1=0x%02X CTRL2=0x%02X CTRL3=0x%02X CTRL5=0x%02X CTRL6=0x%02X CTRL7=0x%02X\r\n",
+         tag ? tag : "cfg", ctrl1, ctrl2, ctrl3, ctrl5, ctrl6, ctrl7);
+}
+
+static bool shouldLogImuDebug() {
+  // Keep verbose IMU telemetry while charging/debugging but suppress it on
+  // battery to reduce CPU/serial overhead.
+  return BAT_Is_Charging();
+}
 
 bool detectStep() {
-  static float last_accel = 0;
-  static unsigned long last_time = 0;
-  const unsigned long debounce_time = 200;  // Debounce for 200 ms
+  static float magBaseline = 1.0f;       // tracks gravity baseline
+  static float motionEnvelope = 0.0f;    // smoothed high-pass magnitude
+  static bool overThreshold = false;     // edge detector state
+  static unsigned long lastStepMs = 0;
+  static float lastX = 0.0f, lastY = 0.0f, lastZ = 0.0f;
+  static bool initialized = false;
 
-  float accel_magnitude = sqrt(Accel.x * Accel.x + Accel.y * Accel.y + Accel.z * Accel.z);
-  float threshold = 1.10;  // Adjust based on trial and testing
+  // Slightly stricter thresholds to reduce incidental wrist-motion false positives.
+  const unsigned long debounceMs = 280;
+  const float envelopeThreshold = 0.065f; // |mag - baseline| in g
+  const float jerkThreshold = 0.18f;      // sum |dx|+|dy|+|dz| per sample
 
-  //Serial.println(accel_magnitude);
+  float mag = sqrtf(Accel.x * Accel.x + Accel.y * Accel.y + Accel.z * Accel.z);
 
-  // Step detection with debouncing
-  if (accel_magnitude > threshold && last_accel <= threshold && (millis() - last_time > debounce_time)) {
-    last_accel = accel_magnitude;
-    last_time = millis();
-    return true;  // Step detected
+  if (!initialized) {
+    lastX = Accel.x;
+    lastY = Accel.y;
+    lastZ = Accel.z;
+    magBaseline = (mag > 0.05f) ? mag : 1.0f;
+    initialized = true;
+    return false;
   }
 
-  last_accel = accel_magnitude;
-  return false;  // No step detected
+  // Treat near-zero vectors as invalid samples (bus/config fault or stale data)
+  // and avoid startup false-positive steps when magnitude collapses from 1g to 0.
+  if (mag < 0.05f) {
+    s_dbgMag = mag;
+    s_dbgJerk = 0.0f;
+    overThreshold = false;
+    return false;
+  }
+
+  float jerk = fabsf(Accel.x - lastX) + fabsf(Accel.y - lastY) + fabsf(Accel.z - lastZ);
+  lastX = Accel.x;
+  lastY = Accel.y;
+  lastZ = Accel.z;
+
+  // Slow baseline tracks gravity/orientation drift, not steps.
+  magBaseline = (0.98f * magBaseline) + (0.02f * mag);
+  float hp = fabsf(mag - magBaseline);
+
+  // Smooth envelope to reject spikes/noise from single samples.
+  motionEnvelope = (0.75f * motionEnvelope) + (0.25f * hp);
+  s_dbgMag = mag;
+  s_dbgEnv = motionEnvelope;
+  s_dbgJerk = jerk;
+
+  bool nowOver = motionEnvelope > envelopeThreshold;
+  bool jerkHit = jerk > jerkThreshold &&
+                 motionEnvelope > (envelopeThreshold * 0.50f) &&
+                 mag > 0.65f && mag < 2.80f;
+  unsigned long now = millis();
+  bool stepped = false;
+  if (((nowOver && !overThreshold) || jerkHit) && (now - lastStepMs > debounceMs)) {
+    lastStepMs = now;
+    stepped = true;
+  }
+  overThreshold = nowOver;
+  return stepped;
 }
 
 /**
@@ -52,10 +119,36 @@ bool detectStep() {
  */
 void QMI8658_Init(void)
 {
-    uint8_t buf[1];
-    Device_addr = QMI8658_L_SLAVE_ADDRESS;     
-    I2C_Read(Device_addr, QMI8658_REVISION_ID, buf, 1);
-    printf("QMI8658 Device ID: %x\r\n",buf[0]);    // Get chip id
+    uint8_t whoAmI = 0;
+    uint8_t revision = 0;
+    s_imuReady = false;
+
+    // Probe both possible I2C addresses and validate WHO_AM_I.
+    const uint8_t candidates[] = { QMI8658_L_SLAVE_ADDRESS, QMI8658_H_SLAVE_ADDRESS };
+    for (size_t i = 0; i < sizeof(candidates); i++) {
+        uint8_t addr = candidates[i];
+        if (I2C_Read(addr, QMI8658_WHO_AM_I, &whoAmI, 1) == ESP_OK &&
+            whoAmI != 0x00 && whoAmI != 0xFF) {
+            Device_addr = addr;
+            I2C_Read(Device_addr, QMI8658_REVISION_ID, &revision, 1);
+            s_imuReady = true;
+            break;
+        }
+    }
+
+    if (!s_imuReady) {
+        printf("QMI8658 not detected at 0x%02X or 0x%02X\r\n",
+               QMI8658_L_SLAVE_ADDRESS, QMI8658_H_SLAVE_ADDRESS);
+        return;
+    }
+
+    printf("QMI8658 detected at 0x%02X (WHO_AM_I=0x%02X, REV=0x%02X)\r\n",
+           Device_addr, whoAmI, revision);
+
+    s_haveValidAccelSample = false;
+    s_zeroVectorStreak = 0;
+    s_lastImuRecoverMs = 0;
+
     setState(sensor_running);             
 
     setAccScale(acc_scale);            
@@ -88,45 +181,73 @@ void QMI8658_Init(void)
         case GYR_RANGE_512DPS: gyroScales = 512.0 / 32768.0; break;
         case GYR_RANGE_1024DPS: gyroScales = 1024.0 / 32768.0; break;
     }
+
+    logImuConfigRegisters("init");
 }
 
 void QMI8658_Loop(void)
 {
-  bool displayAwake = PWR_IsDisplayAwake();
-
-  // Switch accelerometer ODR when the display sleep/wake state changes.
-  // awake  → 30 Hz normal mode  (acc_odr_norm_30):  ~0.45 mA — fast enough for UI
-  // asleep → 3 Hz low-power mode (acc_odr_lp_3):   ~0.013 mA — covers 2 Hz poll rate
-  // Saving ~0.43 mA for the ~85% of time the display is off.
-  static bool lastDisplayState = true;
-  if (displayAwake != lastDisplayState) {
-    lastDisplayState = displayAwake;
-    setAccODR(displayAwake ? acc_odr_norm_30 : acc_odr_lp_3);
-    Serial.printf(">> IMU ODR: %s\n", displayAwake ? "30Hz normal" : "3Hz low-power");
+  if (!s_imuReady) {
+    static unsigned long lastMissingLog = 0;
+    if (millis() - lastMissingLog >= 5000UL) {
+      lastMissingLog = millis();
+      Serial.println("[IMU] not ready - no sensor data");
+    }
+    return;
   }
 
-  // Throttle IMU reads when display is off — step detection still works at lower rate
+  bool displayAwake = PWR_IsDisplayAwake();
+
+  // Keep accelerometer in normal 30 Hz mode in both awake/sleep states.
+  // Low-power ODR modes proved unreliable for step detection on this hardware.
+  static bool odrForced = false;
+  if (!odrForced) {
+    setAccODR(acc_odr_norm_30);
+    odrForced = true;
+    Serial.println(">> IMU ODR forced: 30Hz normal (step reliability)");
+  }
+
+  // Throttle IMU reads when display is off, but keep cadence high enough to
+  // capture short acceleration peaks used by threshold-based step detection.
   if (!displayAwake) {
     static unsigned long lastSleepRead = 0;
-    if (millis() - lastSleepRead < 500) return;  // 2Hz when sleeping
+    if (millis() - lastSleepRead < 100) return;  // 10Hz when sleeping
     lastSleepRead = millis();
   }
 
   getAccelerometer();
+
+  // static unsigned long lastImuDebugLog = 0;
+  // if (shouldLogImuDebug() && millis() - lastImuDebugLog >= 5000UL) {
+  //   lastImuDebugLog = millis();
+  //   Serial.printf("[IMU] ax=%.3f ay=%.3f az=%.3f mag=%.3f env=%.3f jerk=%.3f steps=%d awake=%d\n",
+  //                 Accel.x, Accel.y, Accel.z, s_dbgMag, s_dbgEnv, s_dbgJerk,
+  //                 stepCount, displayAwake ? 1 : 0);
+  // }
+
+  if (!s_haveValidAccelSample) return;
+
   if (detectStep()) {
-    PWR_UpdateActivity();  // Wake display on step (wrist-raise proxy)
+    // Keep step counting independent of display wake policy.
+    // Waking/resetting display idle on every step keeps the screen on while walking
+    // and is a major battery drain.
     stepCount++;
 
     int32_t goal = settings.getDailyStepsGoal();
 
     int32_t pctAchieved = 0;
-    if(goal >= 0) pctAchieved = (stepCount / goal) * 100;
+    if (goal > 0) pctAchieved = (stepCount * 100) / goal;
 
     distanceTraveled = stepCount * 0.75;  // Assume average step length
     caloriesBurned = stepCount * 0.04;    // Calorie estimate per step
 
     eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_DAILY_STEPS, eez::IntegerValue(stepCount));
     eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_DAILY_STEP_PCT, eez::IntegerValue(pctAchieved));
+
+    // if (shouldLogImuDebug()) {
+    //   Serial.printf("[Steps] count=%d ax=%.3f ay=%.3f az=%.3f env=%.3f jerk=%.3f\n",
+    //                 stepCount, Accel.x, Accel.y, Accel.z, s_dbgEnv, s_dbgJerk);
+    // }
   }
 }
 
@@ -238,7 +359,7 @@ void setAccLPF(lpf_t lpf)
     if (sensor_state != sensor_default)
     {
     uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
-    ctrl5 &= !QMI8658_ALPF_MASK;
+    ctrl5 &= ~QMI8658_ALPF_MASK;
     ctrl5 |= lpf << QMI8658_ALPF_OFFSET;
     ctrl5 |= 0x01; // turn on acc low pass filter
     QMI8658_transmit(QMI8658_CTRL5, ctrl5);
@@ -255,7 +376,7 @@ void setGyroLPF(lpf_t lpf)
     if (sensor_state != sensor_default)
     {
     uint8_t ctrl5 = QMI8658_receive(QMI8658_CTRL5);
-    ctrl5 &= !QMI8658_GLPF_MASK;
+    ctrl5 &= ~QMI8658_GLPF_MASK;
     ctrl5 |= lpf << QMI8658_GLPF_OFFSET;
     ctrl5 |= 0x10; // turn on gyro low pass filter
     QMI8658_transmit(QMI8658_CTRL5, ctrl5);
@@ -274,16 +395,17 @@ void setState(sensor_state_t state)
     case sensor_running:
         ctrl1 = QMI8658_receive(QMI8658_CTRL1);
         // enable 2MHz oscillator
-        ctrl1 &= 0xFE;
+        ctrl1 &= ~(0x80 | 0x01);
         // enable auto address increment for fast block reads
         ctrl1 |= 0x40;
         QMI8658_transmit(QMI8658_CTRL1, ctrl1);
 
         // enable high speed internal clock,
-        // acc in full mode, gyro disabled (bit 1 = gyro enable),
+        // acc and gyro in full mode, and
         // disable syncSample mode
-        // Gyro is not used for step detection — saves ~3-5mA
-        QMI8658_transmit(QMI8658_CTRL7, 0x41);
+        // NOTE: This board's QMI8658 variant can report all-zero accel data
+        // when gyro is disabled in CTRL7 (0x41). Keep both enabled (0x43).
+        QMI8658_transmit(QMI8658_CTRL7, 0x43);
 
         // disable AttitudeEngine Motion On Demand
         QMI8658_transmit(QMI8658_CTRL6, 0x00);
@@ -301,7 +423,7 @@ void setState(sensor_state_t state)
     case sensor_locking:
         ctrl1 = QMI8658_receive(QMI8658_CTRL1);
         // enable 2MHz oscillator
-        ctrl1 &= 0xFE;
+        ctrl1 &= ~(0x80 | 0x01);
         // enable auto address increment for fast block reads
         ctrl1 |= 0x40;
         QMI8658_transmit(QMI8658_CTRL1, ctrl1);
@@ -333,15 +455,51 @@ void getAccelerometer(void)
 
   uint8_t buf[6];
 	esp_err_t ret = I2C_Read(Device_addr, QMI8658_AX_L, buf, 6);
-	if(ret != ESP_OK)
-		printf("QMI8658 : Accelerometer read failure\r\n");
+	if(ret != ESP_OK) {
+		printf("QMI8658: Accelerometer read failure (addr=0x%02X)\r\n", Device_addr);
+    return;
+  }
 	else{
+    bool rawAllZero = true;
+    for (size_t i = 0; i < 6; i++) {
+      if (buf[i] != 0) {
+        rawAllZero = false;
+        break;
+      }
+    }
+    if (rawAllZero) {
+      static unsigned long lastRawZeroLog = 0;
+      if (millis() - lastRawZeroLog >= 5000UL) {
+        lastRawZeroLog = millis();
+        uint8_t ctrl1 = QMI8658_receive(QMI8658_CTRL1);
+        uint8_t ctrl2 = QMI8658_receive(QMI8658_CTRL2);
+        uint8_t ctrl7 = QMI8658_receive(QMI8658_CTRL7);
+        Serial.printf("[IMU] raw accel bytes all zero (CTRL1=0x%02X CTRL2=0x%02X CTRL7=0x%02X)\n",
+                      ctrl1, ctrl2, ctrl7);
+      }
+    }
     Accel.x = (float)((int16_t)((buf[1]<<8) | (buf[0])));
     Accel.y = (float)((int16_t)((buf[3]<<8) | (buf[2])));
     Accel.z = (float)((int16_t)((buf[5]<<8) | (buf[4])));
     Accel.x = Accel.x * accelScales;
     Accel.y = Accel.y * accelScales;
     Accel.z = Accel.z * accelScales;
+
+    float absSum = fabsf(Accel.x) + fabsf(Accel.y) + fabsf(Accel.z);
+    if (absSum < 0.01f) {
+      if (s_zeroVectorStreak < 255) s_zeroVectorStreak++;
+      unsigned long now = millis();
+      if (s_zeroVectorStreak >= 25 && (now - s_lastImuRecoverMs) >= 5000UL) {
+        s_lastImuRecoverMs = now;
+        Serial.printf(">> IMU zero-vector streak=%u; reinitializing I2C + IMU\n", s_zeroVectorStreak);
+        I2C_Init();
+        QMI8658_Init();
+        return;
+      }
+    } else {
+      s_zeroVectorStreak = 0;
+      s_haveValidAccelSample = true;
+    }
   }
 
 }

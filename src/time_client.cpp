@@ -25,6 +25,17 @@ void TimeClient::syncWithNTP() {
   // Use numeric NTP server addresses to avoid SNTP DNS callbacks racing with
   // concurrent HTTPS DNS resolution during startup.
   configTime(0, 0, "129.6.15.28", "216.239.35.0");
+
+  // configTime(0, 0, ...) resets the TZ environment variable to UTC.
+  // Re-apply the saved timezone immediately so getLocalTime() returns
+  // local time, not UTC.  Without this, every WiFi sync (every 120 min)
+  // reverts the clock to UTC until the next lookupTimezone() call (every 6 h).
+  if (timezone[0] != '\0') {
+    setenv("TZ", timezone, 1);
+    tzset();
+    Serial.printf("  Re-applied saved timezone: %s\n", timezone);
+  }
+
   if (!getLocalTime(&timeinfo)) {
     Serial.println(F("  Failed to obtain time"));
     return;

@@ -126,8 +126,13 @@ bool GeoLocation::loadUsingIp() {
     return false;
   }
 
-  // dont refresh if our ip is the same
-  if (!didIpChange()) return true;
+  // Skip the geolocation API call only when we have valid coordinates AND the
+  // IP address is confirmed unchanged.  didIpChange() returns false for two
+  // distinct cases: (a) IP genuinely unchanged, and (b) the ipify.org call
+  // failed.  We can't tell them apart, so on first boot — when latitude is
+  // still empty — always proceed regardless of the IP-check result.
+  bool hasCoords = (latitude[0] != '\0');
+  if (hasCoords && !didIpChange()) return true;
 
   bool lookupSuccess = true;
 

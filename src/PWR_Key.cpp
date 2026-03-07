@@ -1,5 +1,7 @@
 #include "PWR_Key.h"
 #include "BAT_Driver.h"
+#include "LVGL_Driver.h"
+#include "Touch_SPD2010.h"
 
 static uint8_t BAT_State = 0;
 static uint8_t Device_State = 0;
@@ -22,6 +24,14 @@ void PWR_RequestWakeFromISR(void) {
   wakeRequestFromIsr = true;
 }
 
+// ISR for the power button (FALLING edge = button press).
+// With Driver_Loop polling at 500 ms, a brief press could be entirely missed
+// between two polls.  This ISR stamps lastActivityTime the instant the button
+// is pressed so the next PWR_Loop wake check always sees it.
+static void IRAM_ATTR PWR_Key_ISR(void) {
+  lastActivityTime = millis();
+}
+
 bool PWR_IsDisplayAwake(void) {
   return displayAwake;
 }
@@ -37,8 +47,22 @@ void Fall_Asleep(void) {
   wakeRequestFromIsr = false;
   // Force panel brightness off without modifying LCD_Backlight.
   // This preserves the user's configured brightness for wake restore.
-  ledcWrite(LCD_Backlight_PIN, 0);
+  // Detach the LEDC backlight channel entirely — setting duty to 0 still
+  // keeps the LEDC peripheral clocked, which can hold an APB_FREQ_MAX PM
+  // lock and prevent DFS from downclocking the CPU.
+  ledcDetach(LCD_Backlight_PIN);
+  // After detach the pin floats — drive it LOW to ensure backlight is off.
+  pinMode(LCD_Backlight_PIN, OUTPUT);
+  digitalWrite(LCD_Backlight_PIN, LOW);
   LCD_Sleep(true);
+  // Clear any pending touch interrupt — the SPD2010 fires phantom interrupts
+  // shortly after LCD_Sleep(true).  The 3-second guard in UI_Loop_Task
+  // provides additional protection, but clearing here avoids an immediate
+  // false wake from a stale flag.
+  Touch_ClearPendingInterrupt();
+  // Stop the 20 ms LVGL tick timer — it wakes the CPU from light sleep
+  // every 20 ms even though there is nothing to render while display is off.
+  Lvgl_PauseTick();
 }
 
 void Restart(void) {
@@ -67,22 +91,12 @@ void PWR_Loop(void) {
   }
   lastLoopTs = now;
 
-  // --- Display idle timeout ---
-  if (displayAwake) {
-    if (now - lastActivityTime > SCREEN_TIMEOUT_MS) {
-      Fall_Asleep();
-    }
-  } else {
-    // Wake display when fresh activity arrives.
-    if (now - lastActivityTime < 500) {
-      displayAwake = true;
-      displaySleepStartMs = 0;
-      LCD_Sleep(false);
-      Set_Backlight(LCD_Backlight);
-    }
-  }
-
   // --- Button long-press handling ---
+  // IMPORTANT: Button handling MUST run before the display wake check below.
+  // PWR_UpdateActivity() sets lastActivityTime, and the wake check tests
+  // (now - lastActivityTime < 1000).  If button handling ran after the wake
+  // check, the activity timestamp wouldn't be seen until the NEXT PWR_Loop
+  // iteration — with a 500 ms Driver_Loop delay the wake window would expire.
   if (BAT_State) {
     bool buttonPressed = !digitalRead(PWR_KEY_Input_PIN);
     if (buttonPressed) {
@@ -113,6 +127,27 @@ void PWR_Loop(void) {
     }
   }
 
+  // --- Display idle timeout ---
+  // Re-read now after button handling so the wake check uses a fresh timestamp.
+  now = millis();
+  if (displayAwake) {
+    if (now - lastActivityTime > SCREEN_TIMEOUT_MS) {
+      Fall_Asleep();
+    }
+  } else {
+    // Wake display when fresh activity arrives.  Window is 1000 ms to give
+    // margin for the 500 ms Driver_Loop sleep delay.
+    if (now - lastActivityTime < 1000) {
+      displayAwake = true;
+      displaySleepStartMs = 0;
+      Lvgl_ResumeTick();
+      LCD_Sleep(false);
+      // Re-attach LEDC before setting brightness (was detached in Fall_Asleep).
+      ledcAttach(LCD_Backlight_PIN, Frequency, Resolution);
+      Set_Backlight(LCD_Backlight);
+    }
+  }
+
   if (now - lastPowerLog >= 60000) {
     lastPowerLog = now;
     unsigned long total = awakeAccumMs + asleepAccumMs;
@@ -132,6 +167,9 @@ void PWR_Init(void) {
   // Active-low key input. Internal pull-up prevents floating/false-low reads
   // that can continuously reset activity and block display sleep.
   pinMode(PWR_KEY_Input_PIN, INPUT_PULLUP);
+  // FALLING edge ISR: ensures even a brief button press (< 500 ms) sets
+  // lastActivityTime immediately, so the next PWR_Loop wake check sees it.
+  attachInterrupt(digitalPinToInterrupt(PWR_KEY_Input_PIN), PWR_Key_ISR, FALLING);
   pinMode(PWR_Control_PIN, OUTPUT);
   // Always latch power so the device stays on when USB is removed.
   // Shutdown() drives this LOW explicitly when a power-off is intended.

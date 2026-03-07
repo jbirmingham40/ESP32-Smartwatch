@@ -25,3 +25,5 @@ void example_increase_lvgl_tick(void *arg);
 
 void Lvgl_Init(void);
 void Lvgl_Loop(void);
+void Lvgl_PauseTick(void);
+void Lvgl_ResumeTick(void);
