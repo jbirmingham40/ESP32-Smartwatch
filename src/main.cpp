@@ -521,7 +521,10 @@ void setup() {
   // -----------------------------------------------------------------------
   // Light sleep kills the native USB-CDC peripheral (no independent clock),
   // so disable it when USB is connected to keep /dev/ttyACM0 alive.
-  bool allow_light_sleep = !BAT_Is_Charging();
+  // BAT_Is_Charging() isn't reliable yet (Driver_Loop hasn't run), so read ADC directly.
+  int _pmMv = analogReadMilliVolts(BAT_ADC_PIN);
+  bool usbConnected = ((float)(_pmMv * 3.0f / 1000.0f) / Measurement_offset) > 4.0f;
+  bool allow_light_sleep = !usbConnected;
   esp_pm_config_t pm_config = {
     .max_freq_mhz       = 80,
     .min_freq_mhz       = 40,

@@ -113,9 +113,19 @@ bool TimeClient::lookupTimezone(const char *latitude, const char *longitude) {
                   const char *abbr = doc["abbreviation"];
                   const char *nextAbbr = doc["nextAbbreviation"];
                   int gmtOffset = doc["gmtOffset"];
-                  int offsetHours = abs(gmtOffset)/3600;
+                  const char *dstFlag = doc["dst"];
+                  bool isDst = (dstFlag && dstFlag[0] == '1');
 
-                  snprintf(timezone, sizeof(timezone), "%s%d%s", abbr, offsetHours, nextAbbr);   // CST6CDT
+                  // POSIX TZ format: <std><offset><dst>
+                  // Offset is for STANDARD time, positive = west of Greenwich.
+                  // When DST is active the API returns the DST abbreviation/offset,
+                  // so we must swap and derive the standard offset (subtract 1 hour).
+                  const char *stdAbbr = isDst ? nextAbbr : abbr;
+                  const char *dstAbbr = isDst ? abbr : nextAbbr;
+                  int stdGmtOffset = isDst ? (gmtOffset - 3600) : gmtOffset;
+                  int posixOffsetHours = -(stdGmtOffset / 3600);
+
+                  snprintf(timezone, sizeof(timezone), "%s%d%s", stdAbbr, posixOffsetHours, dstAbbr);   // CST6CDT
                   setenv("TZ", timezone, 1);  //  Now adjust the TZ.  Clock settings are adjusted to show the new local time
                   Serial.printf("    Setting timezone to %s and timezone name to %s\n", timezone, timezoneName);
                   tzset();
