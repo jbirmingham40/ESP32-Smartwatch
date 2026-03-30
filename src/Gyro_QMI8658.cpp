@@ -59,10 +59,10 @@ bool detectStep() {
   static float lastX = 0.0f, lastY = 0.0f, lastZ = 0.0f;
   static bool initialized = false;
 
-  // Slightly stricter thresholds to reduce incidental wrist-motion false positives.
-  const unsigned long debounceMs = 280;
-  const float envelopeThreshold = 0.065f; // |mag - baseline| in g
-  const float jerkThreshold = 0.18f;      // sum |dx|+|dy|+|dz| per sample
+  // Tuned more sensitive for lighter arm swing and shorter indoor steps.
+  const unsigned long debounceMs = 220;
+  const float envelopeThreshold = 0.035f; // |mag - baseline| in g
+  const float jerkThreshold = 0.10f;      // sum |dx|+|dy|+|dz| per sample
 
   float mag = sqrtf(Accel.x * Accel.x + Accel.y * Accel.y + Accel.z * Accel.z);
 
@@ -93,15 +93,15 @@ bool detectStep() {
   magBaseline = (0.98f * magBaseline) + (0.02f * mag);
   float hp = fabsf(mag - magBaseline);
 
-  // Smooth envelope to reject spikes/noise from single samples.
-  motionEnvelope = (0.75f * motionEnvelope) + (0.25f * hp);
+  // Keep some smoothing, but let the envelope react faster to lighter steps.
+  motionEnvelope = (0.65f * motionEnvelope) + (0.35f * hp);
   s_dbgMag = mag;
   s_dbgEnv = motionEnvelope;
   s_dbgJerk = jerk;
 
   bool nowOver = motionEnvelope > envelopeThreshold;
   bool jerkHit = jerk > jerkThreshold &&
-                 motionEnvelope > (envelopeThreshold * 0.50f) &&
+                 motionEnvelope > (envelopeThreshold * 0.35f) &&
                  mag > 0.65f && mag < 2.80f;
   unsigned long now = millis();
   bool stepped = false;
@@ -518,8 +518,6 @@ void getGyroscope(void)
     Gyro.z = Gyro.z * gyroScales;
   }
 }
-
-
 
 
 

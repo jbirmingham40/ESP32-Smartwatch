@@ -9,7 +9,7 @@
 #define Device_Restart_Time  15
 #define Device_Shutdown_Time 20
 
-#define SCREEN_TIMEOUT_MS    8000   // Blank display after 8 s of inactivity
+#define SCREEN_TIMEOUT_MS    12000   // Blank display after 12 s of inactivity
 
 void Fall_Asleep(void);
 void Shutdown(void);
@@ -21,3 +21,4 @@ void PWR_UpdateActivity(void);  // Call on any user interaction (touch, button)
 void PWR_RequestWakeFromISR(void);  // ISR-safe wake request
 bool PWR_IsDisplayAwake(void);
 unsigned long PWR_GetDisplaySleepMs(void);  // 0 when awake, else elapsed sleep time
+bool PWR_ConsumeWakeRefreshRequest(void);  // true once after each display wake

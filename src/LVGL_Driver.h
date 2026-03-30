@@ -11,7 +11,8 @@
 
 #define LCD_WIDTH     EXAMPLE_LCD_WIDTH
 #define LCD_HEIGHT    EXAMPLE_LCD_HEIGHT
-#define LVGL_BUF_LEN  (LCD_WIDTH * LCD_HEIGHT / 10)
+#define LVGL_DRAW_BUF_LEN  (LCD_WIDTH * LCD_HEIGHT)
+#define LVGL_ROT_BUF_LEN   (LCD_WIDTH * LCD_HEIGHT)
 
 // 20 ms tick drastically reduces wakeups while display is off.
 // LVGL remains responsive for this watch UI workload.

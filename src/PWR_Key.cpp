@@ -2,6 +2,7 @@
 #include "BAT_Driver.h"
 #include "LVGL_Driver.h"
 #include "Touch_SPD2010.h"
+#include "esp_pm.h"
 
 static uint8_t BAT_State = 0;
 static uint8_t Device_State = 0;
@@ -13,6 +14,24 @@ static volatile unsigned long lastActivityTime = 0;  // updated from ISR and mai
 static volatile bool wakeRequestFromIsr = false;
 static bool displayAwake = true;
 static unsigned long displaySleepStartMs = 0;
+static volatile bool wakeRefreshPending = false;
+static esp_pm_lock_handle_t cpuMaxLock = nullptr;
+
+static void AcquireAwakeCpuLock() {
+  if (!cpuMaxLock) return;
+  esp_err_t err = esp_pm_lock_acquire(cpuMaxLock);
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    Serial.printf(">> Failed to acquire awake CPU PM lock: %s\n", esp_err_to_name(err));
+  }
+}
+
+static void ReleaseAwakeCpuLock() {
+  if (!cpuMaxLock) return;
+  esp_err_t err = esp_pm_lock_release(cpuMaxLock);
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    Serial.printf(">> Failed to release awake CPU PM lock: %s\n", esp_err_to_name(err));
+  }
+}
 
 // Called from touch ISR and anywhere else user activity is detected.
 // Only updates a timestamp — safe to call from an interrupt context.
@@ -41,10 +60,17 @@ unsigned long PWR_GetDisplaySleepMs(void) {
   return millis() - displaySleepStartMs;
 }
 
+bool PWR_ConsumeWakeRefreshRequest(void) {
+  bool pending = wakeRefreshPending;
+  wakeRefreshPending = false;
+  return pending;
+}
+
 void Fall_Asleep(void) {
   displayAwake = false;
   displaySleepStartMs = millis();
   wakeRequestFromIsr = false;
+  ReleaseAwakeCpuLock();
   // Force panel brightness off without modifying LCD_Backlight.
   // This preserves the user's configured brightness for wake restore.
   // Detach the LEDC backlight channel entirely — setting duty to 0 still
@@ -135,11 +161,18 @@ void PWR_Loop(void) {
       Fall_Asleep();
     }
   } else {
-    // Wake display when fresh activity arrives.  Window is 1000 ms to give
-    // margin for the 500 ms Driver_Loop sleep delay.
-    if (now - lastActivityTime < 1000) {
+    // Wake display when fresh activity arrives. The off-state Driver_Loop can
+    // sleep for up to 1000 ms, so keep a wider window here; otherwise a valid
+    // button IRQ can age out before the next poll and the display appears to
+    // ignore the press.
+    if (now - lastActivityTime < 2000) {
+      unsigned long sleptForMs = PWR_GetDisplaySleepMs();
       displayAwake = true;
       displaySleepStartMs = 0;
+      wakeRefreshPending = true;
+      AcquireAwakeCpuLock();
+      Serial.printf("[Power] waking display after %lums asleep\n",
+                    sleptForMs);
       Lvgl_ResumeTick();
       LCD_Sleep(false);
       // Re-attach LEDC before setting brightness (was detached in Fall_Asleep).
@@ -180,4 +213,15 @@ void PWR_Init(void) {
     BAT_State = 2;  // USB/no-button boot: immediately ready for button events
   }
   lastActivityTime = millis();  // Start the idle timer from boot
+
+  esp_err_t err = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX,
+                                     0,
+                                     "display_awake_cpu",
+                                     &cpuMaxLock);
+  if (err != ESP_OK) {
+    Serial.printf(">> Failed to create awake CPU PM lock: %s\n", esp_err_to_name(err));
+    cpuMaxLock = nullptr;
+  } else if (displayAwake) {
+    AcquireAwakeCpuLock();
+  }
 }

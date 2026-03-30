@@ -63,9 +63,9 @@ void Driver_Loop(void *parameter) {
     bool awake = PWR_IsDisplayAwake();
     unsigned long now = millis();
 
-    // Keep IMU cadence high enough for step detection even while display is off.
-    // 100 ms awake, 125 ms asleep keeps good step sensitivity with lower CPU duty.
-    unsigned long imuInterval = awake ? 100UL : 125UL;
+    // Higher IMU cadence helps catch shorter wrist-motion peaks used by the
+    // software step detector, especially during light walking.
+    unsigned long imuInterval = awake ? 50UL : 75UL;
     if (now - lastImuRead >= imuInterval) {
       lastImuRead = now;
       QMI8658_Loop();
@@ -279,6 +279,13 @@ void UI_Loop_Task(void *parameter) {
     bool awake = PWR_IsDisplayAwake();
 
     if (awake) {
+      if (PWR_ConsumeWakeRefreshRequest()) {
+        // Some panels lose their visible GRAM contents while blanked. Force a
+        // one-shot redraw on wake so the screen repaints even if no widget
+        // state changed while the display was off.
+        lv_obj_invalidate(lv_scr_act());
+      }
+
       // Rate-limit monitor_heap to 2 Hz — the internal 30 s gate handles the full
       // stats dump; the fast-path still calls ESP.getFreeHeap() every tick which is
       // unnecessary overhead at 200 Hz.
@@ -374,7 +381,9 @@ void setup() {
   // Latch power FIRST before any serial delays that would stall battery boot.
   // Driver_Init uses printf() (UART0) internally so it's safe before Serial.begin().
   Driver_Init();
-  setCpuFrequencyMhz(80);  // Scale down from 240 MHz — cuts CPU power draw ~3x
+  // Boot at full speed so the awake display path can immediately use the
+  // highest CPU frequency before PM locks are configured.
+  setCpuFrequencyMhz(240);
 
   Serial.begin(115200);
   Serial.setTxBufferSize(2048);
@@ -517,7 +526,8 @@ void setup() {
   // 32.768 kHz crystal needed). The BLE controller sleeps between events
   // and should NOT hold the btLS NO_LIGHT_SLEEP PM lock.
   //
-  // DFS range: 40-80 MHz. Light sleep engages when all tasks are idle.
+  // DFS range: 40-240 MHz. While the display is awake a PM lock pins the CPU
+  // at 240 MHz; when asleep, DFS can drop the clock and light sleep can engage.
   // -----------------------------------------------------------------------
   // Light sleep kills the native USB-CDC peripheral (no independent clock),
   // so disable it when USB is connected to keep /dev/ttyACM0 alive.
@@ -526,7 +536,7 @@ void setup() {
   bool usbConnected = ((float)(_pmMv * 3.0f / 1000.0f) / Measurement_offset) > 4.0f;
   bool allow_light_sleep = !usbConnected;
   esp_pm_config_t pm_config = {
-    .max_freq_mhz       = 80,
+    .max_freq_mhz       = 240,
     .min_freq_mhz       = 40,
     .light_sleep_enable = allow_light_sleep,
   };
@@ -535,7 +545,7 @@ void setup() {
     pm_config.light_sleep_enable = false;
     pm_err = esp_pm_configure(&pm_config);
     if (pm_err == ESP_OK) {
-      Serial.println(">> Power management: DFS enabled (40-80MHz), light sleep not supported");
+      Serial.println(">> Power management: DFS enabled (40-240MHz), light sleep not supported");
     }
   }
   if (pm_err != ESP_OK) {

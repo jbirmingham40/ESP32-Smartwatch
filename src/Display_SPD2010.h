@@ -33,15 +33,17 @@
 #define EXAMPLE_LCD_BK_LIGHT_ON_LEVEL       (1)
 #define EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL !EXAMPLE_LCD_BK_LIGHT_ON_LEVEL
 
-#define ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE   (2048)
+#define ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE   (EXAMPLE_LCD_WIDTH * EXAMPLE_LCD_HEIGHT / 10 * sizeof(uint16_t))
 
 
 extern uint8_t LCD_Backlight;
+struct _lv_disp_drv_t;
 
 bool SPD2010_Init();
 
 void LCD_Init();
 void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend,uint16_t* color);
+void LCD_RegisterLvglFlushDriver(struct _lv_disp_drv_t *disp_drv);
 
 // backlight
 void Backlight_Init();

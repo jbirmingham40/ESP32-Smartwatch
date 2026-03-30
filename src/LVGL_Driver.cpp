@@ -14,6 +14,30 @@ static lv_disp_draw_buf_t draw_buf;
 // static lv_color_t buf2[ LVGL_BUF_LEN ];
 static lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(412 * 412 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
 static lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(412 * 412 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+static lv_color_t *rot_buf = (lv_color_t *)heap_caps_malloc(LVGL_ROT_BUF_LEN * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+
+static inline void rotate_area_clockwise_90(const lv_area_t *src, lv_area_t *dst) {
+  dst->x1 = LCD_WIDTH - 1 - src->y2;
+  dst->y1 = src->x1;
+  dst->x2 = LCD_WIDTH - 1 - src->y1;
+  dst->y2 = src->x2;
+}
+
+static void rotate_pixels_clockwise_90(const lv_area_t *area,
+                                       const lv_color_t *src,
+                                       lv_color_t *dst) {
+  const uint16_t src_w = lv_area_get_width(area);
+  const uint16_t src_h = lv_area_get_height(area);
+  const uint16_t dst_w = src_h;
+
+  for (uint16_t y = 0; y < src_h; y++) {
+    for (uint16_t x = 0; x < src_w; x++) {
+      const uint16_t dst_x = src_h - 1 - y;
+      const uint16_t dst_y = x;
+      dst[dst_y * dst_w + dst_x] = src[y * src_w + x];
+    }
+  }
+}
 
 
 
@@ -22,16 +46,6 @@ void Lvgl_print(const char *buf) {
   // Serial.printf(buf);
   // Serial.flush();
 }
-void Lvgl_port_rounder_callback(struct _lv_disp_drv_t *disp_drv, lv_area_t *area) {
-  uint16_t x1 = area->x1;
-  uint16_t x2 = area->x2;
-
-  // round the start of coordinate down to the nearest 4M number
-  area->x1 = (x1 >> 2) << 2;
-
-  // round the end of coordinate up to the nearest 4N+3 number
-  area->x2 = ((x2 >> 2) << 2) + 3;
-}
 /*  Display flushing 
     Displays LVGL content on the LCD
     This function implements associating LVGL data to the LCD screen
@@ -39,11 +53,22 @@ void Lvgl_port_rounder_callback(struct _lv_disp_drv_t *disp_drv, lv_area_t *area
 void Lvgl_Display_LCD(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
   // Skip the QSPI pixel transfer when the display is off — the backlight is
   // already blanked so the data would be invisible, and the SPI DMA transfer
-  // wastes power.  Always call lv_disp_flush_ready() so LVGL doesn't stall.
+  // wastes power. Only signal flush completion immediately if no transfer was
+  // started; otherwise the panel IO callback signals LVGL when DMA finishes.
   if (PWR_IsDisplayAwake()) {
-    LCD_addWindow(area->x1, area->y1, area->x2, area->y2, (uint16_t *)&color_p->full);
+    const uint32_t pixel_count = lv_area_get_size(area);
+    if (rot_buf != NULL && pixel_count <= LVGL_ROT_BUF_LEN) {
+      lv_area_t rotated_area;
+      rotate_area_clockwise_90(area, &rotated_area);
+      rotate_pixels_clockwise_90(area, color_p, rot_buf);
+      LCD_addWindow(rotated_area.x1, rotated_area.y1, rotated_area.x2, rotated_area.y2,
+                    (uint16_t *)&rot_buf->full);
+    } else {
+      lv_disp_flush_ready(disp_drv);
+    }
+  } else {
+    lv_disp_flush_ready(disp_drv);
   }
-  lv_disp_flush_ready(disp_drv);
 }
 /*Read the touchpad*/
 void Lvgl_Touchpad_Read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
@@ -53,8 +78,8 @@ void Lvgl_Touchpad_Read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
   uint8_t tp_cnt = 0;
   tp_pressed = Touch_Get_xy(&tp_x, &tp_y, NULL, &tp_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS);
   if (tp_pressed && (tp_cnt > 0)) {
-    data->point.x = tp_x;
-    data->point.y = tp_y;
+    data->point.x = tp_y;
+    data->point.y = LCD_HEIGHT - 1 - tp_x;
     data->state = LV_INDEV_STATE_PR;
     // printf("LVGL : X=%u Y=%u points=%d\r\n",  tp_x , tp_y,tp_cnt);
   } else {
@@ -67,7 +92,7 @@ void example_increase_lvgl_tick(void *arg) {
 }
 void Lvgl_Init(void) {
   lv_init();
-  lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_LEN);
+  lv_disp_draw_buf_init(&draw_buf, buf1, NULL, LVGL_DRAW_BUF_LEN);
 
   /*Initialize the display*/
   static lv_disp_drv_t disp_drv;
@@ -76,12 +101,17 @@ void Lvgl_Init(void) {
   disp_drv.hor_res = LCD_WIDTH;
   disp_drv.ver_res = LCD_HEIGHT;
   disp_drv.flush_cb = Lvgl_Display_LCD;
-  disp_drv.rounder_cb = Lvgl_port_rounder_callback;
   // Power optimization: avoid full-frame redraw on every LVGL flush.
   // Let LVGL redraw only invalidated regions.
-  disp_drv.full_refresh = 0;
+  disp_drv.full_refresh = 1;
   disp_drv.draw_buf = &draw_buf;
+
+  disp_drv.sw_rotate = 0;
+  disp_drv.rotated = LV_DISP_ROT_NONE;
+  LCD_RegisterLvglFlushDriver(&disp_drv);
+
   lv_disp_drv_register(&disp_drv);
+
 
   /*Initialize the (dummy) input device driver*/
   static lv_indev_drv_t indev_drv;

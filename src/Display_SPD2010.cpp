@@ -2,15 +2,61 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_intr_alloc.h"
+#include "esp_heap_caps.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_spd2010.h"
+#include "lvgl.h"
 
 #include "esp_lcd_panel_io_interface.h"
 #include "esp_lcd_panel_ops.h"
 
 uint8_t LCD_Backlight = 60;
+static lv_disp_drv_t *s_lvgl_disp_drv = NULL;
+static uint16_t *s_flush_dma_buf = NULL;
+static portMUX_TYPE s_flush_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t s_pending_flushes = 0;
+static volatile bool s_wait_for_chunk = false;
+static volatile bool s_chunk_done = false;
+
+#define LCD_DMA_STAGE_PIXELS (EXAMPLE_LCD_WIDTH * EXAMPLE_LCD_HEIGHT / 10)
+
+static bool LCD_OnColorTransferDone(esp_lcd_panel_io_handle_t panel_io,
+                                    esp_lcd_panel_io_event_data_t *edata,
+                                    void *user_ctx) {
+  (void)panel_io;
+  (void)edata;
+  (void)user_ctx;
+
+  bool chunk_done = false;
+  bool flush_done = false;
+
+  portENTER_CRITICAL_ISR(&s_flush_mux);
+  if (s_wait_for_chunk) {
+    s_chunk_done = true;
+    chunk_done = true;
+  }
+  if (s_pending_flushes > 0) {
+    s_pending_flushes--;
+    flush_done = (s_pending_flushes == 0);
+  }
+  portEXIT_CRITICAL_ISR(&s_flush_mux);
+
+  if (chunk_done) {
+    s_wait_for_chunk = false;
+  }
+  if (flush_done && s_lvgl_disp_drv) {
+    lv_disp_flush_ready(s_lvgl_disp_drv);
+  }
+  return false;
+}
+
+void LCD_RegisterLvglFlushDriver(lv_disp_drv_t *disp_drv) {
+  s_lvgl_disp_drv = disp_drv;
+}
 
 void SPD2010_Reset(){
   Set_EXIO(EXIO_PIN2,Low);
@@ -76,8 +122,8 @@ bool SPD2010_Init() {
     .spi_mode = ESP_PANEL_LCD_SPI_MODE,                      
     .pclk_hz = ESP_PANEL_LCD_SPI_CLK_HZ,     
     .trans_queue_depth = ESP_PANEL_LCD_SPI_TRANS_QUEUE_SZ,            
-    .on_color_trans_done = NULL,                              // 传输完成时调用该函数  
-    .user_ctx = NULL,                   
+    .on_color_trans_done = LCD_OnColorTransferDone,
+    .user_ctx = NULL,
     .lcd_cmd_bits = ESP_PANEL_LCD_SPI_CMD_BITS,                 
     .lcd_param_bits = ESP_PANEL_LCD_SPI_PARAM_BITS,                
     .flags = {                          
@@ -96,7 +142,6 @@ bool SPD2010_Init() {
   }else{
     printf("LCD communication parameters are set successfully -- SPI\r\n");
   }
-
   printf("Install LCD driver of spd2010\r\n");
   spd2010_vendor_config_t vendor_config={  
     .flags = {
@@ -122,25 +167,88 @@ bool SPD2010_Init() {
   esp_lcd_panel_disp_on_off(panel_handle, true);
   //test_draw_bitmap(panel_handle);
   printf("spd2010 LCD OK\r\n");
+
+  if (s_flush_dma_buf == NULL) {
+    s_flush_dma_buf = (uint16_t *)heap_caps_malloc(
+        LCD_DMA_STAGE_PIXELS * sizeof(uint16_t),
+        MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (s_flush_dma_buf == NULL) {
+      printf("Failed to allocate LCD DMA staging buffer\r\n");
+      return false;
+    }
+  }
   return true;
 }
 
 void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend,uint16_t* color)
 { 
-  uint32_t size = (Xend - Xstart +1 ) * (Yend - Ystart + 1);
-  for (size_t i = 0; i < size; i++) {
-    color[i] = (((color[i] >> 8) & 0xFF) | ((color[i] << 8) & 0xFF00));
+  const uint16_t width = Xend - Xstart + 1;
+  const uint16_t height = Yend - Ystart + 1;
+  uint16_t max_chunk_rows = height;
+  if (s_flush_dma_buf != NULL && width > 0) {
+    max_chunk_rows = LCD_DMA_STAGE_PIXELS / width;
+    if (max_chunk_rows == 0) {
+      max_chunk_rows = 1;
+    }
   }
-  
-  Xend = Xend + 1;      // esp_lcd_panel_draw_bitmap: x_end End index on x-axis (x_end not included)
-  Yend = Yend + 1;      // esp_lcd_panel_draw_bitmap: y_end End index on y-axis (y_end not included)
-  if (Xend > EXAMPLE_LCD_WIDTH)
-    Xend = EXAMPLE_LCD_WIDTH;
-  if (Yend > EXAMPLE_LCD_HEIGHT)
-    Yend = EXAMPLE_LCD_HEIGHT;
-    
-  // printf("Xstart = %d    Ystart = %d    Xend = %d    Yend = %d \r\n",Xstart, Ystart, Xend, Yend);
-  esp_lcd_panel_draw_bitmap(panel_handle, Xstart, Ystart, Xend, Yend, color);                     // x_end End index on x-axis (x_end not included)
+  const uint16_t chunk_count = (height + max_chunk_rows - 1) / max_chunk_rows;
+
+  portENTER_CRITICAL(&s_flush_mux);
+  s_pending_flushes = chunk_count;
+  s_wait_for_chunk = false;
+  s_chunk_done = false;
+  portEXIT_CRITICAL(&s_flush_mux);
+
+  uint16_t rows_sent = 0;
+  for (uint16_t chunk_index = 0; chunk_index < chunk_count; chunk_index++) {
+    uint16_t chunk_rows = height - rows_sent;
+    if (chunk_rows > max_chunk_rows) {
+      chunk_rows = max_chunk_rows;
+    }
+    const uint32_t chunk_pixels = (uint32_t)width * chunk_rows;
+    uint16_t *tx_buf = color + ((uint32_t)rows_sent * width);
+
+    if (s_flush_dma_buf != NULL && chunk_pixels <= LCD_DMA_STAGE_PIXELS) {
+      tx_buf = s_flush_dma_buf;
+      const uint16_t *src = color + ((uint32_t)rows_sent * width);
+      for (uint32_t i = 0; i < chunk_pixels; i++) {
+        uint16_t pixel = src[i];
+        tx_buf[i] = (uint16_t)(((pixel >> 8) & 0xFF) | ((pixel << 8) & 0xFF00));
+      }
+    } else {
+      printf("LCD flush chunk too large for DMA staging buffer: %lu pixels\r\n",
+             (unsigned long)chunk_pixels);
+      for (uint32_t i = 0; i < chunk_pixels; i++) {
+        uint16_t pixel = tx_buf[i];
+        tx_buf[i] = (uint16_t)(((pixel >> 8) & 0xFF) | ((pixel << 8) & 0xFF00));
+      }
+    }
+
+    const uint16_t chunk_y_start = Ystart + rows_sent;
+    uint16_t chunk_x_end = Xstart + width;
+    uint16_t chunk_y_end = chunk_y_start + chunk_rows;
+    if (chunk_x_end > EXAMPLE_LCD_WIDTH)
+      chunk_x_end = EXAMPLE_LCD_WIDTH;
+    if (chunk_y_end > EXAMPLE_LCD_HEIGHT)
+      chunk_y_end = EXAMPLE_LCD_HEIGHT;
+
+    if (chunk_index + 1 < chunk_count) {
+      portENTER_CRITICAL(&s_flush_mux);
+      s_wait_for_chunk = true;
+      s_chunk_done = false;
+      portEXIT_CRITICAL(&s_flush_mux);
+    }
+
+    esp_lcd_panel_draw_bitmap(panel_handle, Xstart, chunk_y_start, chunk_x_end, chunk_y_end, tx_buf);
+
+    if (chunk_index + 1 < chunk_count) {
+      while (!s_chunk_done) {
+        vTaskDelay(1);
+      }
+    }
+
+    rows_sent += chunk_rows;
+  }
 }
 
 
