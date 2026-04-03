@@ -19,8 +19,15 @@ I built this around the Waveshare ESP32-S3 Touch LCD 1.46" board (412x412), whic
 
 Board references:
 
-- Product: https://www.waveshare.com/esp32-s3-touch-lcd-1.46b.htm
+- Product: https://www.waveshare.com/esp32-s3-touch-lcd-1.46c.htm
 - Wiki: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.46B#Resources
+
+Note there are three versions of this board a version without glass (version a), a version with glass (version b), and a version with widened glass (version c).  The STL files are designed for the version c with the widened glass.  Be careful when purchasing to make sure you buy the right version.
+
+Battery:
+
+I bought a 503450 battery with 1000mAh capacity.  This will get you about 18 hours of battery under normal load.
+
 
 ## Screenshots
 
@@ -103,6 +110,24 @@ For calendar integration, I manually add iCal URL entries in that config file.
 Call answering on iOS does not work correctly when the iOS "Announce Calls" / "ask who is calling" behavior is enabled for unknown callers. In this scenario, iOS may treat the interaction like a missed call due to ANCS limitations.
 
 This is a hobby project, not a polished commercial product. I optimize for progress and usefulness over production-level polish, so you will likely find rough edges, incomplete flows, and limited automated test coverage.
+
+## 3D Models
+
+The models are all located in the STL folder.  The models are broken into band and shell components.  
+
+# Shell
+
+The shell can be printed in PLA.  Print it face down.  No supports should be required.  Add a brim to the button if it fails to stick to the plate.  Otherwise default settings should be all that is needed.
+
+# Band
+
+The band should be printed with TPU95.  
+
+The long strap with holes should be affixed to the watch by folding over the end and super gluing it to underside of the strap after wrapping it around the bottom edge of the shell.  
+
+The short strap should be affixed to the watch by folding over the end and super gluing it to the underside of the strap after wrapping it around the top edge of the shell.  Slide the keeper on the short strap.  Next, affix the clasp to the short strap by folding over the two tabs, running it through the clasp, and gluing it to the underside of the strap.  
+
+
 
 ## Roadmap Ideas
 
