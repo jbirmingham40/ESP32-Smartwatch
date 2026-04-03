@@ -17,14 +17,14 @@ I built this around the Waveshare ESP32-S3 Touch LCD 1.46" board (412x412), whic
 
 ## Hardware and References
 
-Board references:
+### Board references
 
 - Product: https://www.waveshare.com/esp32-s3-touch-lcd-1.46c.htm
 - Wiki: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.46B#Resources
 
 Note there are three versions of this board a version without glass (version a), a version with glass (version b), and a version with widened glass (version c).  The STL files are designed for the version c with the widened glass.  Be careful when purchasing to make sure you buy the right version.
 
-Battery:
+### Battery
 
 I bought a 503450 battery with 1000mAh capacity.  This will get you about 18 hours of battery under normal load.
 
@@ -115,11 +115,11 @@ This is a hobby project, not a polished commercial product. I optimize for progr
 
 The models are all located in the STL folder.  The models are broken into band and shell components.  
 
-# Shell
+### Shell
 
 The shell can be printed in PLA.  Print it face down.  No supports should be required.  Add a brim to the button if it fails to stick to the plate.  Otherwise default settings should be all that is needed.
 
-# Band
+### Band
 
 The band should be printed with TPU95.  
 
