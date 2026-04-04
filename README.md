@@ -28,7 +28,7 @@ Note there are three versions of this board a version without glass (version a),
 
 ### Battery
 
-I bought a 503450 battery with 1000mAh capacity.  This will get you about 18 hours of battery under normal load.
+I bought a 503450 battery with 1000mAh capacity.  This will get you about 18 hours of battery under normal load.  Note that you will want to use a rework station or a soldering iron to remove the two rows of pins on the ESP32-S3 board.  This is important to protect the battery.  Otherwise you risk the pins puncturing the battery.  
 
 
 ## Screenshots
@@ -128,7 +128,6 @@ The band should be printed with TPU95.
 The long strap with holes should be affixed to the watch by folding over the end and super gluing it to underside of the strap after wrapping it around the bottom edge of the shell.  
 
 The short strap should be affixed to the watch by folding over the end and super gluing it to the underside of the strap after wrapping it around the top edge of the shell.  Slide the keeper on the short strap.  Next, affix the clasp to the short strap by folding over the two tabs, running it through the clasp, and gluing it to the underside of the strap.  
-
 
 
 ## Roadmap Ideas
