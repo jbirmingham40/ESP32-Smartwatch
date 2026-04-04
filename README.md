@@ -2,6 +2,8 @@
 
 This is my personal smartwatch project built on the ESP32-S3. I started it to learn more about embedded UI work, BLE integration, and what this Waveshare board could actually do in day-to-day use.
 
+![Finished Watch](screenshots/finished_watch.png)
+
 ## Why I Built This
 
 I wanted a smartwatch project that was fun to build, practical enough to use, and open enough to keep evolving over time. This repo is where I experiment with features I care about (notifications, timers, weather, media control) while learning more about ESP32, LVGL, and BLE integration.
