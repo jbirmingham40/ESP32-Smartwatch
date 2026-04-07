@@ -142,6 +142,7 @@ public:
   void showNext();
   void showPrevious();
   void showLatest();
+  void handleScreenLoad();
 
   void updateDisplay();
 
@@ -208,6 +209,10 @@ private:
   // Quick notification timer tracking
   unsigned long quickNotificationShowTime = 0;
   bool quickNotificationActive = false;
+
+  // Guard against delayed duplicate screen-load events overriding a manual selection.
+  unsigned long lastNotificationsScreenLoadMs = 0;
+  unsigned long lastManualNotificationNavMs = 0;
 
   // FIX: Set when the call screen is pushed while a quick notification was visible.
   // Rather than pop-then-push (which routes through the base screen and confuses EEZ

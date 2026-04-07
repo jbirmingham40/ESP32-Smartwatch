@@ -201,7 +201,7 @@ void action_dismiss_notification(lv_event_t* e) {
 }
 
 void action_load_notifications(lv_event_t* e) {
-  notificationStore.showLatest();
+  notificationStore.handleScreenLoad();
 }
 
 void NotificationStore::showQuickNotification(const QuickNotificationData& data) {
@@ -1224,6 +1224,7 @@ void NotificationStore::showNext() {
     if (nextIdx < 0 || nextIdx >= MAX_NOTIFICATIONS) continue;
 
     if (notifications[nextIdx].valid) {
+      lastManualNotificationNavMs = ::millis();
       currentIndex = nextIdx;
       notifications[nextIdx].viewed = true;
       updateDisplay();
@@ -1254,6 +1255,7 @@ void NotificationStore::showPrevious() {
     if (prevIdx < 0 || prevIdx >= MAX_NOTIFICATIONS) continue;
 
     if (notifications[prevIdx].valid) {
+      lastManualNotificationNavMs = ::millis();
       currentIndex = prevIdx;
       notifications[prevIdx].viewed = true;
       updateDisplay();
@@ -1281,6 +1283,32 @@ void NotificationStore::showLatest() {
     notifications[newest].viewed = true;
     updateDisplay();
   }
+}
+
+void NotificationStore::handleScreenLoad() {
+  unsigned long now = ::millis();
+
+  // EEZ/LVGL can sometimes surface the notifications screen again after a delayed
+  // stacked-screen transition. If the user has already paged manually since the
+  // original load, keep their current selection instead of snapping back to latest.
+  bool duplicateLoad =
+    lastNotificationsScreenLoadMs != 0 &&
+    now >= lastNotificationsScreenLoadMs &&
+    (now - lastNotificationsScreenLoadMs) < (QUICK_NOTIFICATION_DURATION_MS + 2000);
+
+  bool userNavigatedSinceLoad =
+    lastManualNotificationNavMs != 0 &&
+    lastManualNotificationNavMs >= lastNotificationsScreenLoadMs;
+
+  lastNotificationsScreenLoadMs = now;
+
+  if (duplicateLoad && userNavigatedSinceLoad) {
+    Serial.println(">> Notifications screen reload ignored to preserve manual selection");
+    updateDisplay();
+    return;
+  }
+
+  showLatest();
 }
 
 int NotificationStore::getUnviewedCount() {
