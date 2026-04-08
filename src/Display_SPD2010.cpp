@@ -270,7 +270,6 @@ void Set_Backlight(uint8_t Light)                        //
     // the user's selected setting instead of a stale/default value.
     LCD_Backlight = Light;
     const uint32_t maxDuty = (1U << Resolution) - 1U;
-    ledcAttach(LCD_Backlight_PIN, Frequency, Resolution);
     uint32_t backlightDuty = (Light * maxDuty) / Backlight_MAX;
     ledcWrite(LCD_Backlight_PIN, backlightDuty);
   }
