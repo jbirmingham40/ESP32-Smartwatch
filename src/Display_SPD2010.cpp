@@ -256,7 +256,7 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
 // backlight
 void Backlight_Init()
 {
-  ledcAttach(LCD_Backlight_PIN, Frequency, Resolution);    // 设置通道
+  ledcAttachChannel(LCD_Backlight_PIN, Frequency, Resolution, PWM_Channel);    // 设置通道
   ledcWrite(LCD_Backlight_PIN, Dutyfactor);               // 设置亮度
   Set_Backlight(LCD_Backlight);      //0~100  
 }

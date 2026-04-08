@@ -72,14 +72,9 @@ void Fall_Asleep(void) {
   wakeRequestFromIsr = false;
   ReleaseAwakeCpuLock();
   // Force panel brightness off without modifying LCD_Backlight.
-  // This preserves the user's configured brightness for wake restore.
-  // Detach the LEDC backlight channel entirely — setting duty to 0 still
-  // keeps the LEDC peripheral clocked, which can hold an APB_FREQ_MAX PM
-  // lock and prevent DFS from downclocking the CPU.
-  ledcDetach(LCD_Backlight_PIN);
-  // After detach the pin floats — drive it LOW to ensure backlight is off.
-  pinMode(LCD_Backlight_PIN, OUTPUT);
-  digitalWrite(LCD_Backlight_PIN, LOW);
+  // This preserves the user's configured brightness for wake restore while
+  // keeping the PWM channel/timer stable across sleep-wake cycles.
+  ledcWrite(LCD_Backlight_PIN, 0);
   LCD_Sleep(true);
   // Clear any pending touch interrupt — the SPD2010 fires phantom interrupts
   // shortly after LCD_Sleep(true).  The 3-second guard in UI_Loop_Task
@@ -175,8 +170,6 @@ void PWR_Loop(void) {
                     sleptForMs);
       Lvgl_ResumeTick();
       LCD_Sleep(false);
-      // Re-attach LEDC before setting brightness (was detached in Fall_Asleep).
-      ledcAttach(LCD_Backlight_PIN, Frequency, Resolution);
       Set_Backlight(LCD_Backlight);
     }
   }
