@@ -257,22 +257,22 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
 void Backlight_Init()
 {
   ledcAttach(LCD_Backlight_PIN, Frequency, Resolution);    // 设置通道
-  ledcWrite(LCD_Backlight_PIN, Dutyfactor);               // 设置亮度    
+  ledcWrite(LCD_Backlight_PIN, Dutyfactor);               // 设置亮度
   Set_Backlight(LCD_Backlight);      //0~100  
 }
 
 void Set_Backlight(uint8_t Light)                        //
 {
-  if(Light > Backlight_MAX || Light < 0)
+  if (Light > Backlight_MAX)
     printf("Set Backlight parameters in the range of 0 to 100 \r\n");
-  else{
+  else {
     // Persist the configured brightness level so wake-from-sleep restores
     // the user's selected setting instead of a stale/default value.
     LCD_Backlight = Light;
-    uint32_t Backlight = Light*10;
-    if(Backlight == 1000)
-      Backlight = 1024;
-    ledcWrite(LCD_Backlight_PIN, Backlight);
+    const uint32_t maxDuty = (1U << Resolution) - 1U;
+    ledcAttach(LCD_Backlight_PIN, Frequency, Resolution);
+    uint32_t backlightDuty = (Light * maxDuty) / Backlight_MAX;
+    ledcWrite(LCD_Backlight_PIN, backlightDuty);
   }
 }
 
