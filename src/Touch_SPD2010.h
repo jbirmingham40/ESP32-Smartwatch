@@ -10,6 +10,15 @@
 
 
 #define CONFIG_ESP_LCD_TOUCH_MAX_POINTS     (5)     
+
+#ifndef TOUCH_MIN_ACTIVE_WEIGHT
+#define TOUCH_MIN_ACTIVE_WEIGHT         (4)
+#endif
+
+#ifndef TOUCH_ACTIVE_HOLD_MS
+#define TOUCH_ACTIVE_HOLD_MS            (150)
+#endif
+
 /****************HYN_REG_MUT_DEBUG_INFO_MODE address start***********/
 #define SPD2010_REG_Status         (NULL)
 

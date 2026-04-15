@@ -59,12 +59,40 @@ struct ScreenOperation {
   uint16_t time;
   uint16_t delay;
   bool isPush;  // true = push, false = pop
+  bool isQuickNotificationOp;
+  uint32_t quickNotificationGeneration;
 };
+
+static uint32_t s_quickNotificationGeneration = 0;
+static bool s_quickNotificationPushPending = false;
+static bool s_quickNotificationPopPending = false;
+
+static bool isQuickNotificationScreenOnTop() {
+  return (g_currentScreen + 1) == SCREEN_ID_QUICK_NOTIFICATION;
+}
+
+static void clearQuickNotificationFlowVars() {
+  eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_QUICK_NOTIFICATION_ICON, eez::StringValue(""));
+  eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_QUICK_NOTIFICATION_TITLE, eez::StringValue(""));
+  eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_QUICK_NOTIFICATION_MESSAGE, eez::StringValue(""));
+  eez::flow::setGlobalVariable(FLOW_GLOBAL_VARIABLE_QUICK_NOTIFICATION_IMPORTANT, eez::BooleanValue(false));
+}
 
 // Async callbacks that run on LVGL thread
 static void asyncPushScreen(void* param) {
   ScreenOperation* op = (ScreenOperation*)param;
   if (op) {
+    if (op->isQuickNotificationOp) {
+      if (op->quickNotificationGeneration != s_quickNotificationGeneration) {
+        lv_mem_free(op);
+        return;
+      }
+      s_quickNotificationPushPending = false;
+      if (isQuickNotificationScreenOnTop()) {
+        lv_mem_free(op);
+        return;
+      }
+    }
     eez_flow_push_screen(op->screenId, op->animType, op->time, op->delay);
     lv_mem_free(op);
   }
@@ -73,6 +101,17 @@ static void asyncPushScreen(void* param) {
 static void asyncPopScreen(void* param) {
   ScreenOperation* op = (ScreenOperation*)param;
   if (op) {
+    if (op->isQuickNotificationOp) {
+      if (op->quickNotificationGeneration != s_quickNotificationGeneration) {
+        lv_mem_free(op);
+        return;
+      }
+      s_quickNotificationPopPending = false;
+      if (!isQuickNotificationScreenOnTop()) {
+        lv_mem_free(op);
+        return;
+      }
+    }
     eez_flow_pop_screen(op->animType, op->time, op->delay);
     lv_mem_free(op);
   }
@@ -148,6 +187,8 @@ void action_decline_call(lv_event_t* e) {
     op->time = 200;
     op->delay = 0;
     op->isPush = false;
+    op->isQuickNotificationOp = false;
+    op->quickNotificationGeneration = 0;
     lv_async_call(asyncPopScreen, op);
   }
 }
@@ -223,10 +264,23 @@ void NotificationStore::showQuickNotification(const QuickNotificationData& data)
     return;
   }
 
-  bool needToPush = !quickNotificationActive;
+  if (s_quickNotificationPopPending) {
+    s_quickNotificationGeneration++;
+    s_quickNotificationPopPending = false;
+  }
+
+  bool quickScreenOnTop = isQuickNotificationScreenOnTop();
+  bool needToPush = !quickNotificationActive && !quickScreenOnTop;
+
+  if (!quickNotificationActive && quickScreenOnTop) {
+    Serial.println(">> Quick notification state resynced to visible screen");
+  }
+
+  quickNotificationActive = true;
 
   if (needToPush) {
-    quickNotificationActive = true;  // Set BEFORE async call to prevent double-push
+    s_quickNotificationGeneration++;
+    s_quickNotificationPushPending = true;
 
     // CRITICAL FIX: Use lv_async_call for screen push
     ScreenOperation* op = (ScreenOperation*)lv_mem_alloc(sizeof(ScreenOperation));
@@ -236,10 +290,13 @@ void NotificationStore::showQuickNotification(const QuickNotificationData& data)
       op->time = 150;
       op->delay = 0;
       op->isPush = true;
+      op->isQuickNotificationOp = true;
+      op->quickNotificationGeneration = s_quickNotificationGeneration;
       lv_async_call(asyncPushScreen, op);
     } else {
       Serial.println(">> ERROR: Failed to allocate screen operation");
       quickNotificationActive = false;
+      s_quickNotificationPushPending = false;
       return;
     }
   }
@@ -289,11 +346,31 @@ void NotificationStore::dismissQuickNotification() {
   if (!disp || !actScr) {
     quickNotificationActive = false;
     quickNotificationShowTime = 0;
+    s_quickNotificationPushPending = false;
+    s_quickNotificationPopPending = false;
+    clearQuickNotificationFlowVars();
     return;
   }
 
   quickNotificationActive = false;
   quickNotificationShowTime = 0;
+  clearQuickNotificationFlowVars();
+
+  if (s_quickNotificationPushPending && !isQuickNotificationScreenOnTop()) {
+    s_quickNotificationGeneration++;
+    s_quickNotificationPushPending = false;
+    s_quickNotificationPopPending = false;
+    return;
+  }
+
+  if (!isQuickNotificationScreenOnTop()) {
+    s_quickNotificationPushPending = false;
+    s_quickNotificationPopPending = false;
+    return;
+  }
+
+  s_quickNotificationGeneration++;
+  s_quickNotificationPopPending = true;
 
   // CRITICAL FIX: Use lv_async_call for screen pop
   ScreenOperation* op = (ScreenOperation*)lv_mem_alloc(sizeof(ScreenOperation));
@@ -302,9 +379,12 @@ void NotificationStore::dismissQuickNotification() {
     op->time = 150;
     op->delay = 0;
     op->isPush = false;
+    op->isQuickNotificationOp = true;
+    op->quickNotificationGeneration = s_quickNotificationGeneration;
     lv_async_call(asyncPopScreen, op);
   } else {
     Serial.println(">> ERROR: Failed to allocate screen operation");
+    s_quickNotificationPopPending = false;
   }
 }
 
@@ -627,6 +707,8 @@ void NotificationStore::processCommands() {
             op->time = 200;
             op->delay = 0;
             op->isPush = false;
+            op->isQuickNotificationOp = false;
+            op->quickNotificationGeneration = 0;
             lv_async_call(asyncPopScreen, op);
           }
           // FIX: If the call screen was pushed on top of a buried quick notification,
@@ -640,6 +722,8 @@ void NotificationStore::processCommands() {
               op2->time = 0;
               op2->delay = 250;  // After the call screen fade-out completes
               op2->isPush = false;
+              op2->isQuickNotificationOp = false;
+              op2->quickNotificationGeneration = 0;
               lv_async_call(asyncPopScreen, op2);
             }
           }
@@ -673,6 +757,8 @@ void NotificationStore::processCommands() {
               Serial.println(">> Quick notification buried under call screen (will double-pop on call end)");
               quickNotificationActive = false;
               quickNotificationShowTime = 0;
+              s_quickNotificationPushPending = false;
+              s_quickNotificationPopPending = false;
               quickNotificationBuriedUnderCall = true;
             }
 
@@ -692,6 +778,8 @@ void NotificationStore::processCommands() {
               op->time = 200;
               op->delay = 0;
               op->isPush = true;
+              op->isQuickNotificationOp = false;
+              op->quickNotificationGeneration = 0;
               lv_async_call(asyncPushScreen, op);
             }
           } else {
@@ -760,6 +848,8 @@ void NotificationStore::processCommands() {
               op->time = 300;
               op->delay = 0;
               op->isPush = false;
+              op->isQuickNotificationOp = false;
+              op->quickNotificationGeneration = 0;
               lv_async_call(asyncPopScreen, op);
             }
             // FIX: If the call screen was pushed on top of a buried quick notification,
@@ -773,6 +863,8 @@ void NotificationStore::processCommands() {
                 op2->time = 0;
                 op2->delay = 350;  // After the call screen fade-out (300ms) completes
                 op2->isPush = false;
+                op2->isQuickNotificationOp = false;
+                op2->quickNotificationGeneration = 0;
                 lv_async_call(asyncPopScreen, op2);
               }
             }
@@ -805,6 +897,8 @@ void NotificationStore::processCommands() {
             op->time = 200;
             op->delay = 0;
             op->isPush = true;
+            op->isQuickNotificationOp = false;
+            op->quickNotificationGeneration = 0;
             lv_async_call(asyncPushScreen, op);
           }
         }
@@ -833,22 +927,14 @@ void NotificationStore::processCommands() {
 
       if (disp && actScr) {
         Serial.printf(">> Quick notification timer expired (elapsed=%lu ms)\n", elapsed);
-        quickNotificationActive = false;
-        quickNotificationShowTime = 0;
-
-        // CRITICAL FIX: Use lv_async_call for auto-dismiss
-        ScreenOperation* op = (ScreenOperation*)lv_mem_alloc(sizeof(ScreenOperation));
-        if (op) {
-          op->animType = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;
-          op->time = 150;
-          op->delay = 0;
-          op->isPush = false;
-          lv_async_call(asyncPopScreen, op);
-        }
+        dismissQuickNotification();
       } else {
         Serial.println(">> Quick notification timer expired but LVGL not ready, resetting state");
         quickNotificationActive = false;
         quickNotificationShowTime = 0;
+        s_quickNotificationPushPending = false;
+        s_quickNotificationPopPending = false;
+        clearQuickNotificationFlowVars();
       }
     }
   }

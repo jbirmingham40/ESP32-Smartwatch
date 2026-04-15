@@ -3,6 +3,8 @@
 
 struct SPD2010_Touch touch_data = {0};
 volatile bool Touch_interrupts = false;
+static bool s_touchSessionActive = false;
+static unsigned long s_lastAcceptedTouchMs = 0;
 
 // Consuming check: returns true if the touch ISR has fired, and clears the
 // flag so a single interrupt only triggers one wake attempt.
@@ -161,7 +163,8 @@ bool Touch_Get_xy(uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_n
       strength[i] = touch_data.rpt[i].weight;
     }
   }
-  /* Real finger touch — reset idle timer */
+
+  bool acceptedTouch = false;
   if (*point_num > 0) {
     PWR_UpdateActivity();
   }

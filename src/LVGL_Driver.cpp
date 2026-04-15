@@ -75,15 +75,46 @@ void Lvgl_Touchpad_Read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
   bool tp_pressed = false;
   uint16_t tp_x = 0;
   uint16_t tp_y = 0;
+  uint16_t tp_strength = 0;
   uint8_t tp_cnt = 0;
-  tp_pressed = Touch_Get_xy(&tp_x, &tp_y, NULL, &tp_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS);
-  if (tp_pressed && (tp_cnt > 0)) {
+  // Read coordinates AND signal strength in one call.
+  tp_pressed = Touch_Get_xy(&tp_x, &tp_y, &tp_strength, &tp_cnt, CONFIG_ESP_LCD_TOUCH_MAX_POINTS);
+
+  // SPD2010 protocol: weight > 0 means touch is active; weight == 0 is the
+  // hardware's "touch up" notification (not a weak phantom).  We only forward
+  // weight > 0 events to LVGL as pressed; weight == 0 and no-touch both map
+  // to released.  Log on state transitions only to avoid serial flooding.
+  static bool s_wasPressedLast = false;
+
+  bool isActiveTouch = tp_pressed && (tp_cnt > 0) && (tp_strength > 0);
+
+  if (isActiveTouch) {
     data->point.x = tp_y;
     data->point.y = LCD_HEIGHT - 1 - tp_x;
     data->state = LV_INDEV_STATE_PR;
-    // printf("LVGL : X=%u Y=%u points=%d\r\n",  tp_x , tp_y,tp_cnt);
+    if (!s_wasPressedLast) {
+      Serial.printf("[Touch] PRESS  raw=(%u,%u) lvgl=(%d,%d) weight=%u tick=%u\n",
+                    tp_x, tp_y, data->point.x, data->point.y,
+                    (unsigned)tp_strength, (unsigned)lv_tick_get());
+      s_wasPressedLast = true;
+    }
   } else {
     data->state = LV_INDEV_STATE_REL;
+    if (s_wasPressedLast) {
+      lv_indev_t *indev = lv_indev_get_act();
+      if (indev) {
+        lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+        const char* dirName = "none";
+        if      (dir == LV_DIR_LEFT)   dirName = "LEFT";
+        else if (dir == LV_DIR_RIGHT)  dirName = "RIGHT";
+        else if (dir == LV_DIR_TOP)    dirName = "UP";
+        else if (dir == LV_DIR_BOTTOM) dirName = "DOWN";
+        Serial.printf("[Touch] RELEASE gesture=%s tick=%u\n", dirName, (unsigned)lv_tick_get());
+      } else {
+        Serial.printf("[Touch] RELEASE tick=%u\n", (unsigned)lv_tick_get());
+      }
+      s_wasPressedLast = false;
+    }
   }
 }
 void example_increase_lvgl_tick(void *arg) {

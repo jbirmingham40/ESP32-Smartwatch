@@ -21,6 +21,8 @@ extern BLE ble;
 extern WiFi_Client wifiClient;
 extern MediaControls mediaControls;
 
+static TaskHandle_t artworkTaskHandle = nullptr;
+
 void MediaControls::set_artwork_target_widget(lv_obj_t *widget) {
   if (artwork_target_widget) {
     lv_obj_remove_event_cb(artwork_target_widget, artwork_widget_delete_cb);
@@ -136,67 +138,54 @@ void MediaControls::artwork_widget_delete_cb(lv_event_t *e) {
 
 // Background task: fetch + decode, then signal UI core
 static void artwork_task(void *param) {
-  Serial.println(F("[Artwork] Background task started"));
-  Serial.printf("[Artwork] Title: %s, Artist: %s\n", async_title, async_artist);
-  
-  // Monitor stack usage for debugging
-  UBaseType_t stackStart = uxTaskGetStackHighWaterMark(NULL);
+  (void)param;
+  Serial.println(F("[Artwork] Worker task started"));
 
-  char request_title[sizeof(async_title)];
-  char request_artist[sizeof(async_artist)];
-  strncpy(request_title, async_title, sizeof(request_title) - 1);
-  request_title[sizeof(request_title) - 1] = '\0';
-  strncpy(request_artist, async_artist, sizeof(request_artist) - 1);
-  request_artist[sizeof(request_artist) - 1] = '\0';
+  while (1) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-  bitmap_image_t new_artwork = { 0 };
+    char request_title[sizeof(async_title)];
+    char request_artist[sizeof(async_artist)];
+    strncpy(request_title, async_title, sizeof(request_title) - 1);
+    request_title[sizeof(request_title) - 1] = '\0';
+    strncpy(request_artist, async_artist, sizeof(request_artist) - 1);
+    request_artist[sizeof(request_artist) - 1] = '\0';
 
-  bool ok = mediaControls.get_media_image(request_title, request_artist, &new_artwork);
-  
-  // Check stack usage before cleanup
-  UBaseType_t stackEnd = uxTaskGetStackHighWaterMark(NULL);
-  Serial.printf("[Artwork] Stack usage: %d bytes used (high water mark: %d bytes free)\n",
-                (32768 - stackEnd * sizeof(StackType_t)), stackEnd * sizeof(StackType_t));
-  
-  if (stackEnd * sizeof(StackType_t) < 4096) {
-    Serial.printf("[Artwork] WARNING: Stack nearly full! Only %d bytes free. Consider increasing task stack size.\n",
-                  stackEnd * sizeof(StackType_t));
-  }
+    Serial.printf("[Artwork] Background task started\n");
+    Serial.printf("[Artwork] Title: %s, Artist: %s\n", request_title, request_artist);
 
-  if (ok && new_artwork.bitmap_data) {
-    // Free any previous staged artwork that was never consumed
-    if (staged_artwork.bitmap_data) {
-      heap_caps_free(staged_artwork.bitmap_data);
+    bitmap_image_t new_artwork = { 0 };
+    bool ok = mediaControls.get_media_image(request_title, request_artist, &new_artwork);
+
+    UBaseType_t stackEnd = uxTaskGetStackHighWaterMark(NULL);
+    Serial.printf("[Artwork] Stack usage: %d bytes used (high water mark: %d bytes free)\n",
+                  (32768 - stackEnd * sizeof(StackType_t)), stackEnd * sizeof(StackType_t));
+
+    if (stackEnd * sizeof(StackType_t) < 4096) {
+      Serial.printf("[Artwork] WARNING: Stack nearly full! Only %d bytes free. Consider increasing task stack size.\n",
+                    stackEnd * sizeof(StackType_t));
     }
-    staged_artwork = new_artwork;
-    strncpy(staged_artwork_title, request_title, sizeof(staged_artwork_title) - 1);
-    staged_artwork_title[sizeof(staged_artwork_title) - 1] = '\0';
-    strncpy(staged_artwork_artist, request_artist, sizeof(staged_artwork_artist) - 1);
-    staged_artwork_artist[sizeof(staged_artwork_artist) - 1] = '\0';
 
-    // FIX: store with memory_order_release.
-    // This is the WRITE side of the release-acquire pair. It guarantees that ALL
-    // writes above this line (especially staged_artwork = new_artwork) are fully
-    // visible to Core 1 before Core 1's acquire-load of artwork_ready returns true.
-    // Without this, Core 1 can observe artwork_ready=true but read stale
-    // staged_artwork.bitmap_data pointing to already-freed memory (heap poison 0xAB).
-    artwork_ready.store(true, std::memory_order_release);
-    Serial.println(F("[Artwork] Background task finished - image staged"));
-  } else {
-    Serial.println(F("[Artwork] Background task finished - no image, using default"));
-    if (new_artwork.bitmap_data) heap_caps_free(new_artwork.bitmap_data);
-    // FIX: release store so Core 1 sees the flag only after all prior writes complete
-    artwork_use_default.store(true, std::memory_order_release);
+    if (ok && new_artwork.bitmap_data) {
+      if (staged_artwork.bitmap_data) {
+        heap_caps_free(staged_artwork.bitmap_data);
+      }
+      staged_artwork = new_artwork;
+      strncpy(staged_artwork_title, request_title, sizeof(staged_artwork_title) - 1);
+      staged_artwork_title[sizeof(staged_artwork_title) - 1] = '\0';
+      strncpy(staged_artwork_artist, request_artist, sizeof(staged_artwork_artist) - 1);
+      staged_artwork_artist[sizeof(staged_artwork_artist) - 1] = '\0';
+
+      artwork_ready.store(true, std::memory_order_release);
+      Serial.println(F("[Artwork] Background task finished - image staged"));
+    } else {
+      Serial.println(F("[Artwork] Background task finished - no image, using default"));
+      if (new_artwork.bitmap_data) heap_caps_free(new_artwork.bitmap_data);
+      artwork_use_default.store(true, std::memory_order_release);
+    }
+
+    artwork_loading.store(false, std::memory_order_release);
   }
-
-  // FIX: release store matches acquire load in launch_artwork_task() check
-  artwork_loading.store(false, std::memory_order_release);
-  
-  // FIX: Yield to ensure all cleanup operations complete before task deletes itself
-  // This prevents the stack canary check from detecting corruption mid-cleanup
-  vTaskDelay(pdMS_TO_TICKS(50));
-  
-  vTaskDeleteWithCaps(NULL);
 }
 
 // Actually spawn the background download task
@@ -214,17 +203,26 @@ void MediaControls::launch_artwork_task() {
 
   Serial.printf("[Artwork] Launching download: %s – %s\n", async_artist, async_title);
 
-  // One-shot task on Core 0 – stack allocated in PSRAM to save internal heap
-  // FIX: Increased stack to 32KB to avoid corruption during mbedTLS cleanup on error paths
-  xTaskCreatePinnedToCoreWithCaps(
-    artwork_task,
-    "ArtworkDL",
-    32768,          // 32KB stack - mbedTLS cleanup on error paths needs extra space
-    NULL,
-    1,
-    NULL,
-    0,
-    MALLOC_CAP_SPIRAM);
+  if (!artworkTaskHandle) {
+    BaseType_t created = xTaskCreatePinnedToCoreWithCaps(
+      artwork_task,
+      "ArtworkDL",
+      32768,          // 32KB stack for HTTP/TLS/PNG work on Core 0
+      NULL,
+      1,
+      &artworkTaskHandle,
+      0,
+      MALLOC_CAP_SPIRAM);
+
+    if (created != pdPASS || !artworkTaskHandle) {
+      Serial.println(F("[Artwork] Failed to create worker task, using default"));
+      artwork_loading.store(false, std::memory_order_release);
+      artwork_use_default.store(true, std::memory_order_release);
+      return;
+    }
+  }
+
+  xTaskNotifyGive(artworkTaskHandle);
 }
 
 // Called every loop() iteration on Core 1 (UI core)
